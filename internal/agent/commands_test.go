@@ -18,9 +18,9 @@ import (
 	"devbox/internal/record"
 )
 
-// harness is one command under test: the dependencies it reads, the recording
+// testBox is one command under test: the dependencies it reads, the recording
 // session it reaches the box with, and the streams it writes to.
-type harness struct {
+type testBox struct {
 	deps    cli.Deps
 	records *record.Store
 	session *access.Recording
@@ -28,9 +28,9 @@ type harness struct {
 	errOut  *bytes.Buffer
 }
 
-// newHarness builds a command environment rooted in temporary directories, so a
+// newTestBox builds a command environment rooted in temporary directories, so a
 // test never reads or writes the operator's own devbox state.
-func newHarness(t *testing.T, stdin string) *harness {
+func newTestBox(t *testing.T, stdin string) *testBox {
 	t.Helper()
 	t.Setenv("DEVBOX_HOME", t.TempDir())
 	records, err := record.Open(t.TempDir())
@@ -39,7 +39,7 @@ func newHarness(t *testing.T, stdin string) *harness {
 	}
 	out := &bytes.Buffer{}
 	errOut := &bytes.Buffer{}
-	return &harness{
+	return &testBox{
 		deps: cli.Deps{
 			Config:  config.Default(),
 			Records: records,
@@ -55,11 +55,11 @@ func newHarness(t *testing.T, stdin string) *harness {
 }
 
 // open hands a verb the recording session instead of a box.
-func (h *harness) open(context.Context, box.Name) (access.Session, error) { return h.session, nil }
+func (h *testBox) open(context.Context, box.Name) (access.Session, error) { return h.session, nil }
 
 // startSessionRecord writes the durable note a start leaves behind, so a test can
 // put a box in a state the command under test has to react to.
-func (h *harness) startSessionRecord(t *testing.T, request request, ref string) record.Record {
+func (h *testBox) startSessionRecord(t *testing.T, request request, ref string) record.Record {
 	t.Helper()
 	entry, err := h.records.Begin(record.KindAgent, string(request.Box), sessionArgs(request, ref, launchCommand(request, ref)))
 	if err != nil {
@@ -79,7 +79,7 @@ func testRequest(t *testing.T, boxName, provider, task, tree string) request {
 }
 
 func TestStartUploadsTheHandoffBeforeTheSessionStarts(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	task := `fix it's "$HOME" now`
 	uploadsAtStart := -1
 	h.session.Reply = func(command string) (string, error) {
@@ -154,7 +154,7 @@ func TestStartUploadsTheHandoffBeforeTheSessionStarts(t *testing.T) {
 }
 
 func TestStartRefusesWhileAnEarlierSessionIsUnresolved(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	request := testRequest(t, "bedrock", "omp", "work the task", "work")
 	entry := h.startSessionRecord(t, request, "aaaabbbbccccdddd")
 
@@ -187,7 +187,7 @@ func TestStartRefusesWhileAnEarlierSessionIsUnresolved(t *testing.T) {
 }
 
 func TestStartRefusesWhenTheWorkingDirectoryIsMissing(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	h.session.Fail = "test -d"
 
 	err := start(context.Background(), h.deps, []string{"bedrock", "--provider", "omp", "--task", "work the task", "--tree", "work"}, h.open)
@@ -210,7 +210,7 @@ func TestStartRefusesWhenTheWorkingDirectoryIsMissing(t *testing.T) {
 }
 
 func TestStartLeavesAnUnresolvedRecordWhenTheOutcomeIsLost(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	h.session.Fail = "tmux new-session"
 
 	err := start(context.Background(), h.deps, []string{"bedrock", "--provider", "omp", "--task", "work the task", "--tree", "work"}, h.open)
@@ -234,7 +234,7 @@ func TestStartLeavesAnUnresolvedRecordWhenTheOutcomeIsLost(t *testing.T) {
 }
 
 func TestListMergesRecordsWithTmux(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	request := testRequest(t, "bedrock", "omp", "work the task", "work")
 	running := h.startSessionRecord(t, request, "aaaabbbbccccdddd")
 	if err := h.records.Known(running, sessionName("aaaabbbbccccdddd")); err != nil {
@@ -272,7 +272,7 @@ func TestListMergesRecordsWithTmux(t *testing.T) {
 }
 
 func TestStopRecordsTheSessionOnlyAfterTheKillSucceeds(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	request := testRequest(t, "bedrock", "omp", "work the task", "work")
 
 	failing := h.startSessionRecord(t, request, "aaaabbbbccccdddd")
@@ -318,7 +318,7 @@ func TestStopRecordsTheSessionOnlyAfterTheKillSucceeds(t *testing.T) {
 }
 
 func TestStopAsksBeforeItKills(t *testing.T) {
-	h := newHarness(t, "no\n")
+	h := newTestBox(t, "no\n")
 	request := testRequest(t, "bedrock", "omp", "work the task", "work")
 	entry := h.startSessionRecord(t, request, "aaaabbbbccccdddd")
 	if err := h.records.Known(entry, sessionName("aaaabbbbccccdddd")); err != nil {
@@ -345,7 +345,7 @@ func TestStopAsksBeforeItKills(t *testing.T) {
 }
 
 func TestStopRefusesASessionDevboxDidNotStart(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	err := stop(context.Background(), h.deps, []string{"bedrock", "aaaabbbbccccdddd", "--yes"}, h.open)
 	if err == nil {
 		t.Fatal("stop() killed a session devbox has no record of")
@@ -356,7 +356,7 @@ func TestStopRefusesASessionDevboxDidNotStart(t *testing.T) {
 }
 
 func TestLogsReadsThePane(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	h.session.Reply = func(string) (string, error) { return "first line\nsecond line\n", nil }
 
 	if err := logs(context.Background(), h.deps, []string{"bedrock", "aaaabbbbccccdddd"}, h.open); err != nil {
@@ -371,7 +371,7 @@ func TestLogsReadsThePane(t *testing.T) {
 }
 
 func TestAttachRunsInteractiveSSH(t *testing.T) {
-	h := newHarness(t, "")
+	h := newTestBox(t, "")
 	var got []string
 	run := func(_ context.Context, argv []string, _ io.Reader, _, _ io.Writer) error {
 		got = argv

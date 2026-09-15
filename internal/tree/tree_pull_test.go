@@ -214,6 +214,38 @@ func TestPullRestoresTheLocalTreeWhenTheApplyFails(t *testing.T) {
 	}
 }
 
+// TestPullLeavesExcludedLocalPathsAlone is the return direction of the allowlist:
+// a pull deletes and rewrites only what a manifest declares, so a secret and a
+// dependency tree beside the files it does rewrite survive untouched.
+func TestPullLeavesExcludedLocalPathsAlone(t *testing.T) {
+	local := treeFixture(t, "alpha", map[string]string{
+		"a.txt":                     "one\n",
+		"b.txt":                     "two\n",
+		".env":                      "SECRET=local\n",
+		"node_modules/dep/index.js": "module.exports = 1;\n",
+	})
+	box := treeFixture(t, "alpha", map[string]string{"a.txt": "changed\n"})
+
+	f := newFixture(t, newStaging(t))
+	if err := f.run("push", "dev", local); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	f.session = &treeBox{Recording: &access.Recording{}, t: t, dir: box, tree: "alpha"}
+	if err := f.run("pull", "dev", local); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
+	got := snapshot(t, local)
+	want := map[string]string{
+		"a.txt":                     "changed\n",
+		".env":                      "SECRET=local\n",
+		"node_modules/dep/index.js": "module.exports = 1;\n",
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("the pull left %v, want %v", got, want)
+	}
+}
+
 // TestPullRefusesAnUnreadableStateFile keeps a state file devbox cannot trust
 // from being written over: the pull stops before it touches either tree.
 func TestPullRefusesAnUnreadableStateFile(t *testing.T) {

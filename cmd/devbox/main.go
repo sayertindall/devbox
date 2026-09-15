@@ -87,6 +87,13 @@ func run() error {
 		DryRun:     *dryRun || os.Getenv("DEVBOX_DRY_RUN") == "1",
 	}
 
+	return buildRegistry(deps).Run(ctx, deps, global.Args())
+}
+
+// buildRegistry wires every slice's commands into one dispatcher. It is a
+// function so the end-to-end test drives the same wiring the binary does,
+// including the duplicate-name check.
+func buildRegistry(deps cli.Deps) *cli.Registry {
 	registry := cli.NewRegistry()
 	registry.Add(machine.Commands()...)
 	registry.Add(network.Commands()...)
@@ -97,7 +104,7 @@ func run() error {
 	registry.Add(tools.CommandsWith(tools.Mise{}, tools.Npm{}, boxDialer{deps: deps})...)
 	registry.Add(reconcile.Commands()...)
 	registry.Add(configCommands()...)
-	return registry.Run(ctx, deps, global.Args())
+	return registry
 }
 
 // boxDialer adapts the access package's session to the narrow interface the

@@ -24,7 +24,7 @@ type Session interface {
 // Dialer opens a session on a box. The binary injects one that uses the managed
 // SSH configuration.
 type Dialer interface {
-	Open(name box.Name) (Session, error)
+	Open(ctx context.Context, name box.Name) (Session, error)
 }
 
 // Commands returns the toolchain verbs.
@@ -237,7 +237,7 @@ func apply(ctx context.Context, deps cli.Deps, args []string, dialer Dialer) err
 	if dialer == nil {
 		return fmt.Errorf("no box dialer is wired into this build")
 	}
-	session, err := dialer.Open(name)
+	session, err := dialer.Open(ctx, name)
 	if err != nil {
 		return err
 	}

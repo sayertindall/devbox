@@ -178,3 +178,26 @@ func TestEffectiveToolsFallsBackToBuiltins(t *testing.T) {
 		t.Fatalf("declared pin missing: %+v", got)
 	}
 }
+
+func TestStatePathStaysInsideTheStateRoot(t *testing.T) {
+	t.Setenv("DEVBOX_HOME", t.TempDir())
+	path, err := StatePath("trees.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(path, "trees.json") {
+		t.Fatalf("unexpected path: %q", path)
+	}
+	nested, err := StatePath("agents", "dev", "handoff.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(nested, "agents/dev/handoff.json") {
+		t.Fatalf("nested state path is wrong: %q", nested)
+	}
+	for _, bad := range []string{"", ".", "..", "a/b", `a\b`} {
+		if _, err := StatePath(bad); err == nil {
+			t.Fatalf("state path component %q must be rejected so it cannot escape the state root", bad)
+		}
+	}
+}

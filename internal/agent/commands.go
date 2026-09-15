@@ -300,8 +300,10 @@ func attach(ctx context.Context, deps cli.Deps, args []string, open opener, run 
 		deps.Printf("dry run: %s", strings.Join(argv, " "))
 		return nil
 	}
-	// The alias is what ssh reads, so the session is reachable only through the
-	// configuration the access slice wrote for this box.
+	// Opening the session is what describes the box and refreshes the managed SSH
+	// entry, so the alias below resolves even when the box came back on a new
+	// address. The interactive ssh is a separate process with the operator's own
+	// terminal, so the session devbox would be handed is not the one used here.
 	if _, err := open(ctx, name); err != nil {
 		return err
 	}

@@ -3,9 +3,9 @@
 // running, reads a pane, attaches to it, and stops it.
 //
 // A session is a tmux session named devbox-<id> on the box. Every start is
-// written to the durable record store before the first remote call, so a dropped
-// connection leaves a session the operator can still name, inspect, and reconcile
-// instead of a process nobody can account for.
+// written to the durable record store before the first call that can create
+// anything, so a dropped connection leaves a session the operator can still name,
+// inspect, and reconcile instead of a process nobody can account for.
 package agent
 
 import (
@@ -22,9 +22,11 @@ import (
 	"devbox/internal/config"
 )
 
-// Provider is an agent harness devbox can start on a box. The name is also the
-// program the detached session runs: the bootstrap installs each harness on the
-// PATH such a session inherits.
+// Provider is an agent harness devbox can start on a box.
+//
+// The harnesses table below says which program runs and which flags start it
+// without a terminal, and the bootstrap installs each one on the PATH a detached
+// session inherits.
 type Provider string
 
 const (
@@ -33,22 +35,58 @@ const (
 	ProviderCodex  Provider = "codex"
 )
 
-// providers is the closed set devbox will start, so a mistyped provider cannot
-// run an arbitrary program on the box.
-var providers = []Provider{ProviderOmp, ProviderClaude, ProviderCodex}
-
-// ParseProvider accepts one of the harnesses devbox installs.
-func ParseProvider(value string) (Provider, error) {
-	for _, provider := range providers {
-		if string(provider) == value {
-			return provider, nil
-		}
-	}
-	return "", fmt.Errorf("unsupported provider %q: use %s", value, providerList())
+// harness is how one provider is told to work without a terminal.
+//
+// The flags come from what each installed binary prints for itself, not from a
+// guess: omp -p, claude -p (--print), codex exec. Every harness reads its
+// instruction from the command line, so the prompt is always the last argument.
+type harness struct {
+	provider Provider
+	binary   string
+	flags    []string
 }
 
-// providerList names the providers in the order the usage line reads.
-func providerList() string { return "omp, claude, or codex" }
+// harnesses is the closed set devbox will start, in the order the usage line and
+// the error message list. Adding a provider is a row here and a case in the
+// launch test, and nothing else: a mistyped provider can never run an arbitrary
+// program on the box, and no verb has to know one harness from another.
+var harnesses = []harness{
+	{provider: ProviderOmp, binary: "omp", flags: []string{"-p"}},
+	{provider: ProviderClaude, binary: "claude", flags: []string{"-p"}},
+	{provider: ProviderCodex, binary: "codex", flags: []string{"exec"}},
+}
+
+// harnessFor accepts one of the harnesses devbox starts and returns how it is
+// started, so a provider name is validated and resolved in one place.
+func harnessFor(provider string) (harness, error) {
+	for _, candidate := range harnesses {
+		if string(candidate.provider) == provider {
+			return candidate, nil
+		}
+	}
+	return harness{}, fmt.Errorf("unsupported provider %q: use %s", provider, providerList())
+}
+
+// argv is the command devbox sends, with the prompt last.
+func (h harness) argv(prompt string) string {
+	return strings.Join(append(append([]string{h.binary}, h.flags...), prompt), " ")
+}
+
+// providerList names the providers in the order the table lists them.
+func providerList() string {
+	names := make([]string, 0, len(harnesses))
+	for _, provider := range harnesses {
+		names = append(names, string(provider.provider))
+	}
+	switch len(names) {
+	case 0:
+		return "none"
+	case 1:
+		return names[0]
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + ", or " + names[len(names)-1]
+	}
+}
 
 // sessionPrefix marks every tmux session devbox starts. Nothing devbox does
 // touches a session without it, so another tool's session is never listed as a
@@ -185,11 +223,22 @@ func mkdirCommand(ref string) string {
 // laptop ends the connection and nothing else.
 func launchCommand(request request, ref string) string {
 	inner := "cd " + request.RemoteDir +
-		" && " + string(request.Provider) +
-		" --task-file " + pathExpr(remoteHandoff(ref)) +
-		" " + shellQuote(request.Task) +
+		" && " + request.harness.argv(promptWord(request, ref)) +
 		"; echo done > " + pathExpr(remoteStatus(ref))
 	return "tmux new-session -d -s " + sessionName(ref) + " " + shellQuote(inner)
+}
+
+// promptWord is the instruction the harness is started with.
+//
+// The packet on the box is the source of truth for both devbox and the agent, so
+// the prompt sends the harness to it by absolute path and repeats the task the
+// operator typed. The three pieces are quoted separately because they expand
+// differently: the box expands the packet path once, and nothing expands the task.
+func promptWord(request request, ref string) string {
+	return shellQuote("Read the handoff packet at ") +
+		pathExpr(remoteHandoff(ref)) +
+		shellQuote(" and work the task it describes: ") +
+		shellQuote(request.Task)
 }
 
 // listCommand asks tmux for the session name and its creation time. The creation
@@ -218,6 +267,7 @@ func statusCommand(ref string) string {
 type request struct {
 	Box          box.Name
 	Provider     Provider
+	harness      harness
 	Task         string
 	Tree         string
 	Dir          string // as the operator wrote it, or the default devbox chose
@@ -234,10 +284,11 @@ type request struct {
 // starts with the facts devbox already knows: where the tree came from, what the
 // box costs, and which of its parts may not move.
 func newRequest(name box.Name, providerValue, task, tree, dir string) (request, error) {
-	provider, err := ParseProvider(providerValue)
+	selected, err := harnessFor(providerValue)
 	if err != nil {
 		return request{}, err
 	}
+	provider := selected.provider
 	task = strings.TrimSpace(task)
 	if task == "" {
 		return request{}, errors.New("a task is required: pass --task")
@@ -263,12 +314,13 @@ func newRequest(name box.Name, providerValue, task, tree, dir string) (request, 
 	return request{
 		Box:          name,
 		Provider:     provider,
+		harness:      selected,
 		Task:         task,
 		Tree:         tree,
 		Dir:          dir,
 		RemoteDir:    remoteDir,
 		CurrentState: currentState(name, tree, dir),
-		NextAction:   fmt.Sprintf("run the %s session on the task above", provider),
+		NextAction:   "read the handoff packet and work the task it describes",
 		Constraints:  constraints(dir),
 	}, nil
 }

@@ -12,33 +12,53 @@ import (
 	"devbox/internal/box"
 )
 
-// TestLaunchCommandQuotesTheTaskForEveryShell pins the exact bytes devbox sends
-// for a task holding a single quote, a double quote, and a dollar sign. The task
+// TestLaunchCommandPerProvider pins the exact bytes devbox sends for one task
+// holding a single quote, a double quote, and a dollar sign. Each harness is
+// started the way its own help says it starts non-interactively, and the command
 // crosses the login shell ssh starts and the shell tmux runs the session with, so
-// the string is the contract: it is quoted once for tmux and once for each shell.
-// The round trip below proves the bytes mean what they say.
-func TestLaunchCommandQuotesTheTaskForEveryShell(t *testing.T) {
-	request, err := newRequest(box.Name("bedrock"), "omp", `fix it's "$HOME" now`, "work", "")
-	if err != nil {
-		t.Fatalf("newRequest() error = %v", err)
-	}
+// the string is the contract. The round trip below proves the bytes mean what
+// they say.
+func TestLaunchCommandPerProvider(t *testing.T) {
 	const ref = "0123456789abcdef"
+	task := `fix it's "$HOME" now`
+	const head = `tmux new-session -d -s devbox-0123456789abcdef ` +
+		`'cd "$HOME/devbox/trees/work" && `
+	const tail = `; echo done > "$HOME/devbox/agents/0123456789abcdef/status"'`
 
-	want := `tmux new-session -d -s devbox-0123456789abcdef ` +
-		`'cd "$HOME/devbox/trees/work" && omp --task-file "$HOME/devbox/agents/0123456789abcdef/handoff.json" ` +
-		`'\''fix it'\''\'\'''\''s "$HOME" now'\''` +
-		`; echo done > "$HOME/devbox/agents/0123456789abcdef/status"'`
-
-	if got := launchCommand(request, ref); got != want {
-		t.Fatalf("launchCommand() =\n%s\nwant\n%s", got, want)
+	want := []struct {
+		provider Provider
+		command  string
+	}{
+		{
+			provider: ProviderOmp,
+			command:  head + `omp -p '\''Read the handoff packet at '\''"$HOME/devbox/agents/0123456789abcdef/handoff.json"'\'' and work the task it describes: '\'''\''fix it'\''\'\'''\''s "$HOME" now'\''` + tail,
+		},
+		{
+			provider: ProviderClaude,
+			command:  head + `claude -p '\''Read the handoff packet at '\''"$HOME/devbox/agents/0123456789abcdef/handoff.json"'\'' and work the task it describes: '\'''\''fix it'\''\'\'''\''s "$HOME" now'\''` + tail,
+		},
+		{
+			provider: ProviderCodex,
+			command:  head + `codex exec '\''Read the handoff packet at '\''"$HOME/devbox/agents/0123456789abcdef/handoff.json"'\'' and work the task it describes: '\'''\''fix it'\''\'\'''\''s "$HOME" now'\''` + tail,
+		},
+	}
+	if len(want) != len(harnesses) {
+		t.Fatalf("the test covers %d providers and devbox starts %d", len(want), len(harnesses))
+	}
+	for _, test := range want {
+		request := testRequest(t, "bedrock", string(test.provider), task, "work")
+		if got := launchCommand(request, ref); got != test.command {
+			t.Errorf("launchCommand() for %s =\n%s\nwant\n%s", test.provider, got, test.command)
+		}
 	}
 }
 
-// TestLaunchCommandReachesTheHarnessUnchanged runs the command devbox builds
-// through a real shell twice, the way ssh and tmux would, and asserts the harness
-// receives the task byte for byte. Every other test here reads the command as
-// text; this one is the proof that the quoting survives both shells, and that the
-// session writes the marker devbox later reports.
+// TestLaunchCommandReachesTheHarnessUnchanged runs each provider's command through
+// a real shell twice, the way ssh and tmux would, and asserts the harness receives
+// one prompt argument holding the packet's absolute path and the task byte for
+// byte. Every other test here reads the command as text; this one is the proof
+// that the quoting survives both shells, and that the session writes the marker
+// devbox later reports.
 func TestLaunchCommandReachesTheHarnessUnchanged(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the box runs a POSIX shell; this test needs one on the operator's machine too")
@@ -51,37 +71,36 @@ func TestLaunchCommandReachesTheHarnessUnchanged(t *testing.T) {
 	bin := filepath.Join(root, "bin")
 	inner := filepath.Join(root, "inner")
 	argv := filepath.Join(root, "argv")
-	work := filepath.Join(home, box.TreeRoot, "work")
 	session := filepath.Join(home, box.AgentRoot, ref)
-	for _, dir := range []string{bin, work, session} {
+	for _, dir := range []string{bin, filepath.Join(home, box.TreeRoot, "work"), session} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	writeStub(t, filepath.Join(bin, "tmux"), "#!/bin/sh\nlast=\nfor arg in \"$@\"; do last=\"$arg\"; done\nprintf '%s' \"$last\" > \"$DEVBOX_STUB_INNER\"\n")
-	writeStub(t, filepath.Join(bin, "omp"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$DEVBOX_STUB_ARGV\"\n")
 
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	t.Setenv("DEVBOX_STUB_INNER", inner)
 	t.Setenv("DEVBOX_STUB_ARGV", argv)
 
-	request, err := newRequest(box.Name("bedrock"), "omp", task, "work", "")
-	if err != nil {
-		t.Fatalf("newRequest() error = %v", err)
-	}
-	run(t, "/bin/sh", "-c", launchCommand(request, ref))
-	tmuxSaw := readFile(t, inner)
-	run(t, "/bin/sh", "-c", tmuxSaw)
+	for _, provider := range harnesses {
+		t.Run(provider.binary, func(t *testing.T) {
+			writeStub(t, filepath.Join(bin, provider.binary), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$DEVBOX_STUB_ARGV\"\n")
+			request := testRequest(t, "bedrock", string(provider.provider), task, "work")
+			run(t, "/bin/sh", "-c", launchCommand(request, ref))
+			tmuxSaw := readFile(t, inner)
+			run(t, "/bin/sh", "-c", tmuxSaw)
 
-	if got := strings.Split(strings.TrimSuffix(readFile(t, argv), "\n"), "\n"); len(got) != 3 ||
-		got[0] != "--task-file" ||
-		got[1] != filepath.Join(session, handoffFile) ||
-		got[2] != task {
-		t.Fatalf("the harness received %q, want --task-file %s and the task unchanged", got, filepath.Join(session, handoffFile))
-	}
-	if got := readFile(t, filepath.Join(session, statusFile)); got != "done\n" {
-		t.Fatalf("the session wrote %q to the status file, want \"done\\n\"", got)
+			prompt := "Read the handoff packet at " + filepath.Join(session, handoffFile) + " and work the task it describes: " + task
+			want := append(append([]string{}, provider.flags...), prompt)
+			if got := strings.Split(strings.TrimSuffix(readFile(t, argv), "\n"), "\n"); !equal(got, want) {
+				t.Fatalf("the harness received %q, want %q", got, want)
+			}
+			if got := readFile(t, filepath.Join(session, statusFile)); got != "done\n" {
+				t.Fatalf("the session wrote %q to the status file, want \"done\\n\"", got)
+			}
+		})
 	}
 }
 
@@ -145,4 +164,18 @@ func run(t *testing.T, argv ...string) {
 	if output, err := exec.CommandContext(context.Background(), argv[0], argv[1:]...).CombinedOutput(); err != nil {
 		t.Fatalf("%s: %v\n%s", strings.Join(argv, " "), err, output)
 	}
+}
+
+// equal compares two argument vectors, so a test reports a wrong argument rather
+// than a wrong length.
+func equal(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }

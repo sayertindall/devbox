@@ -25,6 +25,8 @@ const (
 	KindSnapshot  = "snapshot"
 	KindDelete    = "delete"
 	KindBootstrap = "bootstrap"
+	// KindAgent covers a session devbox started on a box.
+	KindAgent = "agent"
 )
 
 // State is the certainty devbox has about an operation.

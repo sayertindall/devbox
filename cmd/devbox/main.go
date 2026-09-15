@@ -19,12 +19,15 @@ import (
 	"devbox/internal/access"
 	"devbox/internal/agent"
 	"devbox/internal/bootstrap"
+	"devbox/internal/box"
 	"devbox/internal/cli"
 	"devbox/internal/config"
 	"devbox/internal/gcloud"
 	"devbox/internal/machine"
 	"devbox/internal/network"
+	"devbox/internal/reconcile"
 	"devbox/internal/record"
+	"devbox/internal/tools"
 	"devbox/internal/tree"
 )
 
@@ -91,8 +94,22 @@ func run() error {
 	registry.Add(bootstrap.Commands()...)
 	registry.Add(tree.Commands()...)
 	registry.Add(agent.Commands()...)
+	registry.Add(tools.CommandsWith(tools.Mise{}, tools.Npm{}, boxDialer{deps: deps})...)
+	registry.Add(reconcile.Commands()...)
 	registry.Add(configCommands()...)
 	return registry.Run(ctx, deps, global.Args())
+}
+
+// boxDialer adapts the access package's session to the narrow interface the
+// tools slice declares, so tool management does not import the SSH layer.
+type boxDialer struct{ deps cli.Deps }
+
+func (d boxDialer) Open(name box.Name) (tools.Session, error) {
+	session, err := access.Dialer{Config: d.deps.Config, Out: d.deps.Out, Err: d.deps.Err, Stdin: d.deps.Stdin}.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 // configCommands are the operator's own settings: they describe and create the

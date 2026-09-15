@@ -37,9 +37,9 @@ const gitMarker = ".git"
 // exclude list: those subtrees never enter a projection, so a repository buried
 // inside one is irrelevant and must not cause a false rejection.
 //
-// ponytail: duplicated rather than exported from manifest, because exporting it
-// would widen a reviewed security API for one scan. Revisit if a third caller
-// needs the same list.
+// The list is duplicated rather than exported from manifest: exporting it would
+// widen a reviewed security API for one scan. Revisit if a third caller needs
+// the same list.
 var skipDirs = []string{".ssh", ".aws", ".config", ".claude", ".codex", ".omp", ".agentbox", "node_modules", "dist", "build"}
 
 // Materialize writes the sanitized HEAD baseline of sourceRoot into the
@@ -140,11 +140,11 @@ func cleanup(sourceRoot, parent, worktree string) error {
 
 // hasGitMarker reports whether sourceRoot is the top of a Git checkout.
 //
-// ponytail: the marker is checked instead of asking Git for a toplevel, so a
-// source root that is merely a subdirectory of some repository is treated as
-// having no history and gets a synthetic baseline. That is the conservative
-// answer: the alternative would silently project a whole enclosing repository
-// the caller never named.
+// The marker is checked instead of asking Git for a toplevel, so a source root
+// that is merely a subdirectory of some repository is treated as having no
+// history and gets a synthetic baseline. That is the conservative answer: the
+// alternative would silently project a whole enclosing repository the caller
+// never named.
 func hasGitMarker(sourceRoot string) (bool, error) {
 	info, err := os.Lstat(sourceRoot)
 	if err != nil {

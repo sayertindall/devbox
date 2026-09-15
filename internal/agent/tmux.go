@@ -130,7 +130,24 @@ func render(out io.Writer, boxName box.Name, records []sessionRecord, live []tmu
 		}
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", ref, display(string(session.Provider)), display(session.Tree), state, age(since, now))
 	}
-	return writer.Flush()
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	// An unresolved session blocks the next start for its provider, so the
+	// listing says what to do about it instead of leaving the operator to read
+	// the record directory. This is the same instruction a refusal prints.
+	for _, ref := range refs {
+		session, recorded := byRef[ref]
+		if !recorded || !session.unresolved() {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "session %s is unresolved and blocks the next %s start; clear it with: devbox reconcile %s --note \"what you checked\"\n",
+			session.Ref, session.Provider, session.Entry.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // age renders how long ago something happened, at the coarsest scale that still

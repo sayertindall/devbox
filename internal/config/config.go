@@ -186,8 +186,9 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// Decode parses configuration bytes with unknown keys rejected.
-func Decode(data []byte) (Config, error) {
+// Parse reads configuration bytes with unknown keys rejected, without requiring
+// every setting. It is what a partially filled file is checked with.
+func Parse(data []byte) (Config, error) {
 	cfg := Default()
 	decoder := toml.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
@@ -200,10 +201,44 @@ func Decode(data []byte) (Config, error) {
 	if cfg.Tools == nil {
 		cfg.Tools = map[string]string{}
 	}
+	return cfg, nil
+}
+
+// Decode parses configuration bytes and requires the settings a machine needs.
+func Decode(data []byte) (Config, error) {
+	cfg, err := Parse(data)
+	if err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// LoadOptional reads the configuration when it exists. A missing file is not an
+// error: version, help, and config init must work before anything is configured,
+// and the commands that need settings check for them themselves.
+func LoadOptional(explicit string) (Config, string, bool, error) {
+	path := explicit
+	if path == "" {
+		resolved, err := DefaultPath()
+		if err != nil {
+			return Config{}, "", false, err
+		}
+		path = resolved
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return Default(), path, false, nil
+		}
+		return Config{}, path, false, fmt.Errorf("stat configuration %s: %w", path, err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		return Config{}, path, true, err
+	}
+	return cfg, path, true, nil
 }
 
 // LoadOrDefault reads the given path, or the default path when empty.
@@ -234,6 +269,58 @@ func Save(path string, cfg Config) error {
 		return fmt.Errorf("create configuration directory: %w", err)
 	}
 	return writeFile(path, []byte(Render(cfg)))
+}
+
+// Missing reports the settings that must be filled in before a box can be
+// created, so init can write the file and then say what is still blank instead
+// of refusing to write anything at all.
+func (c Config) Missing() []string {
+	var missing []string
+	required := []struct {
+		name  string
+		value string
+	}{
+		{"project", c.Project},
+		{"zone", c.Zone},
+		{"machine_type", c.MachineType},
+		{"image_family", c.ImageFamily},
+		{"service_account", c.ServiceAccount},
+		{"data_disk_name", c.DataDiskName},
+		{"data_mount", c.DataMount},
+		{"ssh_prefix", c.SSHPrefix},
+		{"remote_user", c.RemoteUser},
+	}
+	for _, setting := range required {
+		if strings.TrimSpace(setting.value) == "" {
+			missing = append(missing, setting.name)
+		}
+	}
+	if c.BootstrapURL == "" {
+		missing = append(missing, "bootstrap_url")
+	}
+	return missing
+}
+
+// Init writes the canonical configuration without requiring every setting.
+//
+// The file is decoded again before it is installed, so init can never leave a
+// file devbox cannot read, but the required settings are reported rather than
+// enforced: the operator writes the file first and fills it in second.
+func Init(path string, cfg Config) ([]string, error) {
+	if strings.TrimSpace(cfg.Project) == "" {
+		return nil, fmt.Errorf("a project is required: devbox config init --project <project-id>")
+	}
+	if cfg.Region == "" {
+		cfg.Region = RegionFromZone(cfg.Zone)
+	}
+	rendered := Render(cfg)
+	if _, err := Parse([]byte(rendered)); err != nil {
+		return nil, fmt.Errorf("generated configuration is not readable: %w", err)
+	}
+	if err := writeFile(path, []byte(rendered)); err != nil {
+		return nil, err
+	}
+	return cfg.Missing(), nil
 }
 
 // Render produces the commented configuration file for the settings.

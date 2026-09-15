@@ -41,8 +41,9 @@ const Version = 1
 
 // Entry kinds. Directories are implied by entry paths.
 //
-// ponytail: no directory entries; an empty directory carries no source and Git
-// does not track one either. Add a KindDir entry if a project ever needs one.
+// Directories are implied by entry paths: an empty directory carries no source
+// and Git does not track one either. A KindDir entry can be added if a project
+// ever needs to project an empty directory.
 const (
 	KindFile    = "file"
 	KindSymlink = "symlink"
@@ -63,9 +64,9 @@ const envPrefix = ".env."
 // Policy selects the source policy. Only the fixed mandatory allowlist exists
 // today, matching config.Project.SourcePolicy == "allowlist".
 //
-// ponytail: no fields yet. Add per-project excludes here when a project needs
-// more than the mandatory list; Materialize must then be given the same policy
-// so its undeclared-path rewalk uses identical rules.
+// Policy has no fields yet. Per-project excludes belong here when a project
+// needs more than the mandatory list; Materialize must then be given the same
+// policy so its undeclared-path rewalk uses identical rules.
 type Policy struct{}
 
 // mandatoryExcludes never enter a source or baseline projection. Matching is by

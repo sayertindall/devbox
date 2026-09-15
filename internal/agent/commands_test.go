@@ -245,6 +245,10 @@ func TestListMergesRecordsWithTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.startSessionRecord(t, request, "2222333344445555")
+	lost := h.startSessionRecord(t, request, "aaaabbbb11112222")
+	if err := h.records.Unknown(lost, "the connection dropped after the start"); err != nil {
+		t.Fatal(err)
+	}
 	neverStarted := h.startSessionRecord(t, request, "5555666677778888")
 	if err := h.records.Failed(neverStarted, "the session directory could not be created"); err != nil {
 		t.Fatal(err)
@@ -261,10 +265,19 @@ func TestListMergesRecordsWithTmux(t *testing.T) {
 		{"aaaabbbbccccdddd", "omp", "work", "running"},
 		{"eeeeffff00001111", "omp", "work", "stopped"},
 		{"2222333344445555", "omp", "work", "unresolved"},
+		{"aaaabbbb11112222", "omp", "work", "unresolved"},
 		{"5555666677778888", "omp", "work", "failed"},
 		{"9999888877776666", "-", "-", "unrecorded"},
 	} {
 		assertRow(t, output, want.id, want.provider, want.tree, want.state)
+	}
+	// An unresolved session blocks a start until it is cleared, so the listing
+	// names the record that holds it and the command that clears it.
+	if !strings.Contains(output, "session 2222333344445555 is unresolved and blocks the next omp start") {
+		t.Errorf("list output does not say that the pending session blocks a start:\n%s", output)
+	}
+	if !strings.Contains(output, "devbox reconcile "+lost.ID+` --note "what you checked"`) {
+		t.Errorf("list output does not name the reconcile command for %s:\n%s", lost.ID, output)
 	}
 	if strings.Contains(output, "othertool") {
 		t.Errorf("list output reports a session devbox did not start:\n%s", output)

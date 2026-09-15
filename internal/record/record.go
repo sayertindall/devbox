@@ -60,13 +60,14 @@ type Store struct {
 	Root string
 }
 
-// Open returns a store rooted at dir, creating it owner-only.
+// Open returns a store rooted at dir.
+//
+// It creates nothing: the directory appears with the first record, so a command
+// that only reads state, or one that cannot act at all, leaves the operator's
+// machine exactly as it found it.
 func Open(dir string) (*Store, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("record directory is required")
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create record directory: %w", err)
 	}
 	return &Store{Root: dir}, nil
 }

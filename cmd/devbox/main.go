@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"devbox/internal/access"
@@ -51,11 +52,15 @@ func run() error {
 	dryRun := global.Bool("dry-run", false, "print the cloud commands instead of running them")
 	project := global.String("project", "", "override the configured project")
 	zone := global.String("zone", "", "override the configured zone")
-	if err := global.Parse(os.Args[1:]); err != nil {
+	// cli.Parse rather than global.Parse: the standard parser stops at the first
+	// positional argument, and `devbox config init --project p` is the natural
+	// order to write that command.
+	commandLine, err := cli.Parse(global, os.Args[1:])
+	if err != nil {
 		return err
 	}
 
-	cfg, path, err := config.LoadOrDefault(*configPath)
+	cfg, path, configured, err := config.LoadOptional(*configPath)
 	if err != nil {
 		return err
 	}
@@ -65,6 +70,10 @@ func run() error {
 	if *zone != "" {
 		cfg.Zone = *zone
 		cfg.Region = config.RegionFromZone(*zone)
+	}
+
+	if !configured && !allowedWithoutConfiguration(firstArgument(commandLine)) {
+		return fmt.Errorf("no configuration at %s; create one with: devbox config init --project <project-id>", path)
 	}
 
 	recordDir, err := config.RecordDir()
@@ -87,7 +96,29 @@ func run() error {
 		DryRun:     *dryRun || os.Getenv("DEVBOX_DRY_RUN") == "1",
 	}
 
-	return buildRegistry(deps).Run(ctx, deps, global.Args())
+	return buildRegistry(deps).Run(ctx, deps, commandLine)
+}
+
+// allowedWithoutConfiguration reports whether a command can do anything useful
+// before the operator has a configuration file. Everything else refuses, which
+// also means a command that cannot act never creates state on the operator's
+// machine.
+func allowedWithoutConfiguration(name string) bool {
+	switch name {
+	case "version", "help", "config":
+		return true
+	default:
+		return false
+	}
+}
+
+// firstArgument is the command name in an argument list, for the check that
+// decides whether a missing configuration is fatal.
+func firstArgument(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
 }
 
 // buildRegistry wires every slice's commands into one dispatcher. It is a
@@ -145,13 +176,15 @@ func configCommands() []cli.Command {
 					}
 					return nil
 				case "init":
-					if deps.Config.Project == "" {
-						return fmt.Errorf("config init needs a project: pass --project or set project in %s", deps.ConfigPath)
-					}
-					if err := config.Save(deps.ConfigPath, deps.Config); err != nil {
+					missing, err := config.Init(deps.ConfigPath, deps.Config)
+					if err != nil {
 						return err
 					}
 					deps.Printf("wrote %s", deps.ConfigPath)
+					if len(missing) > 0 {
+						deps.Printf("still to fill in: %s", strings.Join(missing, ", "))
+						deps.Printf("edit it with: devbox tools edit")
+					}
 					return nil
 				default:
 					return fmt.Errorf("usage: devbox config [init|show]")

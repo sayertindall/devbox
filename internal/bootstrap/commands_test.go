@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,15 +171,24 @@ func TestBootstrapUploadPublishesAndRecordsTheURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StatePath: %v", err)
 	}
-	want := []string{"storage", "cp", path, "gs://example-devbox/" + startupFileName}
-	got := r.cloud.Last()
-	if len(got) != len(want) {
-		t.Fatalf("the publish command is %v, want %v", got, want)
+	calls := r.cloud.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("upload made %d cloud calls, want a publish and a grant:\n%s", len(calls), r.cloud.Argv())
 	}
+	want := []string{"storage", "cp", path, "gs://example-devbox/" + startupFileName}
 	for index := range want {
-		if got[index] != want[index] {
-			t.Fatalf("the publish command is %v, want %v", got, want)
+		if calls[0][index] != want[index] {
+			t.Fatalf("the publish command is %v, want %v", calls[0], want)
 		}
+	}
+	// The box reads the script with its own service account, which holds no
+	// project roles, so the publish is only useful with the grant beside it.
+	wantGrant := []string{"storage", "buckets", "add-iam-policy-binding", "gs://example-devbox",
+		"--member=serviceAccount:" + cfg.ServiceAccount,
+		"--role=roles/storage.objectViewer",
+		"--project=example-project"}
+	if !slices.Equal(calls[1], wantGrant) {
+		t.Fatalf("the grant is %v, want %v", calls[1], wantGrant)
 	}
 	saved, err := config.Load(r.deps.ConfigPath)
 	if err != nil {

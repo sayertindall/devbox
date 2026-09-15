@@ -169,12 +169,16 @@ func bootstrapUpload(ctx context.Context, deps cli.Deps, args []string) error {
 	argv := []string{"storage", "cp", path, object}
 	if deps.DryRun {
 		deps.Printf("dry run: gcloud %s", strings.Join(argv, " "))
+		deps.Printf("dry run: gcloud %s", strings.Join(grantArgv(deps.Config, strings.TrimSuffix(target, "/")), " "))
 		deps.Printf("dry run: %s is unchanged, so bootstrap_url stays blank", deps.ConfigPath)
 		deps.Printf("dry run: a real run records bootstrap_url = %s", object)
 		return nil
 	}
 	if _, err := deps.Cloud.Run(ctx, argv...); err != nil {
 		return fmt.Errorf("publish the startup script: %w", err)
+	}
+	if err := grantBootstrapRead(ctx, deps, strings.TrimSuffix(target, "/")); err != nil {
+		return err
 	}
 	cfg := deps.Config
 	cfg.BootstrapURL = object
@@ -185,7 +189,36 @@ func bootstrapUpload(ctx context.Context, deps cli.Deps, args []string) error {
 	return nil
 }
 
-// bootstrapBucket reduces a configured bootstrap url to its bucket, so a second
+// grantBootstrapRead lets the box fetch the script it is told to run.
+//
+// An instance reads startup-script-url with its own service account, which holds
+// no project roles of its own, and a bucket that only project members can read is
+// therefore a bucket the box cannot use: it boots, fetches nothing, and installs
+// nothing, with the failure visible only in the instance's serial console.
+func grantBootstrapRead(ctx context.Context, deps cli.Deps, bucket string) error {
+	if strings.TrimSpace(deps.Config.ServiceAccount) == "" {
+		deps.Printf("no service_account is configured, so nothing was granted read on %s", bucket)
+		deps.Printf("the box will not be able to fetch the script until you run:")
+		deps.Printf("  gcloud storage buckets add-iam-policy-binding %s --member=serviceAccount:<account> --role=roles/storage.objectViewer", bucket)
+		return nil
+	}
+	argv := grantArgv(deps.Config, bucket)
+	if _, err := deps.Cloud.Run(ctx, argv...); err != nil {
+		return fmt.Errorf("let the box read the script: %w", err)
+	}
+	deps.Printf("%s can read %s", deps.Config.ServiceAccount, bucket)
+	return nil
+}
+
+// grantArgv is the binding that lets the box read its startup script.
+func grantArgv(cfg config.Config, bucket string) []string {
+	return []string{"storage", "buckets", "add-iam-policy-binding", bucket,
+		"--member=serviceAccount:" + cfg.ServiceAccount,
+		"--role=roles/storage.objectViewer",
+		cfg.ProjectFlag()}
+}
+
+// bootstrapBucket reduces a configured bootstrap url to its bucket reduces a configured bootstrap url to its bucket, so a second
 // upload publishes to the place the first one chose. A local path or an empty
 // value yields nothing: publishing needs a bucket.
 func bootstrapBucket(url string) string {

@@ -234,9 +234,16 @@ func LoadOptional(explicit string) (Config, string, bool, error) {
 		}
 		return Config{}, path, false, fmt.Errorf("stat configuration %s: %w", path, err)
 	}
-	cfg, err := Load(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}, path, true, err
+		return Config{}, path, true, fmt.Errorf("read configuration %s: %w", path, err)
+	}
+	// Parsed, not validated: a file the operator is still filling in must be
+	// readable, so the commands that edit it keep working while the settings a
+	// machine needs are still blank.
+	cfg, err := Parse(data)
+	if err != nil {
+		return Config{}, path, true, fmt.Errorf("configuration %s: %w", path, err)
 	}
 	return cfg, path, true, nil
 }
@@ -269,6 +276,15 @@ func Save(path string, cfg Config) error {
 		return fmt.Errorf("create configuration directory: %w", err)
 	}
 	return writeFile(path, []byte(Render(cfg)))
+}
+
+// Explain reports why a configuration cannot provision a machine, naming every
+// blank setting at once rather than only the first one validation reaches.
+func (c Config) Explain() error {
+	if missing := c.Missing(); len(missing) > 0 {
+		return fmt.Errorf("these settings are blank: %s", strings.Join(missing, ", "))
+	}
+	return c.Validate()
 }
 
 // Missing reports the settings that must be filled in before a box can be

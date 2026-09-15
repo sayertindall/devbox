@@ -21,10 +21,14 @@ import (
 // Commands returns the reconciliation verbs.
 func Commands() []cli.Command {
 	return []cli.Command{{
-		Name:    "reconcile",
-		Summary: "List or clear the records that block a box",
-		Usage:   "devbox reconcile [<record-id>] [--box <name>] [--note <text>]",
-		Run:     run,
+		Name:       "reconcile",
+		Summary:    "List or clear the records that block a box",
+		Usage:      "devbox reconcile [<record-id>] [--box <name>] [--note <text>]",
+		ConfigOnly: true,
+		Help: `With no arguments it lists every unresolved record with the command it
+recorded, so you can check the cloud. Clearing one needs --note, so an unblock
+always says who checked what.`,
+		Run: run,
 	}}
 }
 

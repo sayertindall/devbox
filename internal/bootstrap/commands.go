@@ -52,7 +52,12 @@ func Commands() []cli.Command {
 			Name:    "bootstrap",
 			Summary: "Render and publish the startup script that builds a box",
 			Usage:   "devbox bootstrap show | devbox bootstrap upload [--bucket gs://bucket]",
-			Run:     runBootstrap,
+			// show prints the script; upload checks the settings it needs itself.
+			ConfigOnly: true,
+			Help: `show    prints the startup script a new box would run
+upload  writes it to the state directory, and with --bucket publishes it and
+        records the resulting url so machine new uses it`,
+			Run: runBootstrap,
 		},
 		{
 			Name:    "image",
@@ -61,10 +66,11 @@ func Commands() []cli.Command {
 			Run:     runImage,
 		},
 		{
-			Name:    "toolchain",
-			Summary: "Print the toolchain a box installs",
-			Usage:   "devbox toolchain",
-			Run:     runToolchain,
+			Name:       "toolchain",
+			Summary:    "Print the toolchain a box installs",
+			Usage:      "devbox toolchain",
+			ConfigOnly: true,
+			Run:        runToolchain,
 		},
 	}
 }
@@ -123,17 +129,27 @@ func bootstrapUpload(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The publish call needs a project, and only a project: this verb is how
+	// bootstrap_url itself gets set, so requiring the whole configuration here
+	// would make the command refuse the one job it exists to do.
+	if *bucket != "" && strings.TrimSpace(deps.Config.Project) == "" {
+		return fmt.Errorf("publishing needs a project: set project in %s (devbox tools edit opens it)", deps.ConfigPath)
+	}
 	path, err := config.StatePath(startupFileName)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create the state directory: %w", err)
+	if deps.DryRun {
+		deps.Printf("would write %s (%d bytes)", path, len(script))
+	} else {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return fmt.Errorf("create the state directory: %w", err)
+		}
+		if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
+			return fmt.Errorf("write the startup script: %w", err)
+		}
+		deps.Printf("wrote %s", path)
 	}
-	if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
-		return fmt.Errorf("write the startup script: %w", err)
-	}
-	deps.Printf("wrote %s", path)
 
 	target := *bucket
 	if target == "" {
@@ -288,7 +304,7 @@ func own(ctx context.Context, deps cli.Deps, name box.Name) (box.Facts, error) {
 		return box.Facts{}, err
 	}
 	if owned, ok := box.NameFromLabels(facts.Labels); !ok || owned != name {
-		return box.Facts{}, fmt.Errorf("box %s is not labeled by devbox, refusing to touch it", name)
+		return box.Facts{}, fmt.Errorf("instance %s carries no devbox labels; devbox did not create it and will not act on it. If it is yours, label it with devbox-name=%s,devbox-managed=true and devbox will adopt it", name, name)
 	}
 	return facts, nil
 }

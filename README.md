@@ -25,10 +25,15 @@ Everything runs on your own GCE project. There is no service, no account, and no
 
 ## Install
 
+Needs `gcloud` authenticated against your project, plus `ssh`, `rsync`, `git`,
+and `mise` on this machine. `mise` is only used to resolve tool versions and to
+build devbox itself; the box installs its own copy.
+
 ```sh
-mise install            # Go 1.26.5
+mise install            # Go, pinned in mise.toml
 mise run install        # builds ~/.local/bin/devbox
 devbox config init --project <project-id>
+devbox help <command>   # a command's usage and flags
 ```
 
 `devbox config init` writes `~/.devbox/config.toml`. Fill in `service_account`, then:
@@ -39,7 +44,10 @@ devbox machine new dev  # creates the box, which runs the startup script on boot
 devbox ssh dev          # the SSH entry is written automatically on first use
 ```
 
-Creating a machine costs money and is your decision; run `devbox machine new dev --dry-run` first to read the exact `gcloud` call it would make.
+Creating a machine costs money and is your decision; run `devbox --dry-run machine new dev`
+first to read the exact `gcloud` call it would make. `--dry-run` belongs before the
+command name, and every command honors it: a rehearsal prints what it would run and
+touches neither your machine nor the box.
 
 ## Dependencies
 
@@ -74,7 +82,7 @@ An empty table means the built-in toolchain. There is one rule for that, so an e
 - `devbox push`, `pull`, `trees`
 - `devbox agent` start, list, logs, attach, stop
 - `devbox tools` list, add, remove, update, outdated, apply, edit
-- `devbox bootstrap` show, upload; `devbox image bake`
+- `devbox bootstrap` show, upload; `devbox image bake`; `devbox toolchain`
 - `devbox reconcile`, `devbox config`, `devbox version`
 
 ## Where things live

@@ -37,6 +37,14 @@ func CommandsWith(mise, npm Resolver, dialer Dialer) []cli.Command {
 		Name:    "tools",
 		Summary: "Add, remove, update, and apply the toolchain pins",
 		Usage:   "devbox tools <list|add|remove|update|outdated|apply|edit>",
+		// Editing the pins needs only the configuration file; apply needs a box
+		// and checks the rest itself.
+		ConfigOnly: true,
+		Help: `add <tool>[@version]  resolves the newest version when none is given
+update [tool...]     refreshes every pin and the harness, and prints each change
+outdated             read only: what is behind
+apply <box>          converges a running box from the pins, in one ssh call
+edit                 opens the configuration file in $EDITOR`,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			return run(ctx, deps, args, mise, npm, dialer)
 		},
@@ -64,7 +72,7 @@ func run(ctx context.Context, deps cli.Deps, args []string, mise, npm Resolver, 
 	case "edit":
 		return edit(deps)
 	default:
-		return fmt.Errorf("unknown tools action %q", action)
+		return fmt.Errorf("unknown tools action %q\n\nusage: devbox tools <list|add|remove|update|outdated|apply|edit>", action)
 	}
 }
 
@@ -227,6 +235,12 @@ func apply(ctx context.Context, deps cli.Deps, args []string, dialer Dialer) err
 	name, err := box.ParseName(args[0])
 	if err != nil {
 		return err
+	}
+	// This group runs before a project is configured, so the verb that reaches a
+	// box checks the two settings that reach it. It does not need the rest: the box
+	// already exists by the time anything is applied to it.
+	if strings.TrimSpace(deps.Config.Project) == "" || strings.TrimSpace(deps.Config.Zone) == "" {
+		return fmt.Errorf("apply needs a project and a zone: set both in %s (devbox tools edit opens it)", deps.ConfigPath)
 	}
 	script := convergeScript(deps)
 	if deps.DryRun {

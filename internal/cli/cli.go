@@ -53,7 +53,16 @@ type Command struct {
 	Name    string
 	Summary string
 	Usage   string
-	Run     func(ctx context.Context, deps Deps, args []string) error
+	// ConfigOnly marks a command that works from the configuration file alone,
+	// so it runs before the settings a machine needs are filled in. Every other
+	// command is refused while the configuration is incomplete, which is what
+	// keeps a half-written file from provisioning the wrong machine.
+	ConfigOnly bool
+	// Help is the optional detail a reader needs beyond the usage line: the
+	// flags a command takes and what each one does. It is printed by
+	// `devbox help <command>`.
+	Help string
+	Run  func(ctx context.Context, deps Deps, args []string) error
 }
 
 // Registry holds every command the binary exposes.
@@ -104,10 +113,38 @@ func (r *Registry) Help() string {
 			width = len(command.Name)
 		}
 	}
+	lines = append(lines, "commands:")
 	for _, command := range r.Commands() {
 		lines = append(lines, fmt.Sprintf("  %-*s  %s", width, command.Name, command.Summary))
 	}
+	lines = append(lines, "")
+	lines = append(lines, "usage: devbox <command> [arguments]")
+	lines = append(lines, "       devbox help <command>   the command's usage and flags")
 	return strings.Join(lines, "\n")
+}
+
+// Describe renders one command's usage, its flags, and how to see its subverbs.
+func (r *Registry) Describe(name string) (string, error) {
+	command, ok := r.Find(name)
+	if !ok {
+		return "", fmt.Errorf("unknown command %q\n\n%s", name, r.Help())
+	}
+	var lines []string
+	lines = append(lines, command.Summary)
+	if command.Usage != "" {
+		lines = append(lines, "", "usage: "+command.Usage)
+	}
+	if command.Help != "" {
+		lines = append(lines, "", strings.TrimRight(command.Help, "\n"))
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// ConfigOnly reports whether a command is allowed to run before the
+// configuration names a project and the rest of what a machine needs.
+func (r *Registry) ConfigOnly(name string) bool {
+	command, ok := r.Find(name)
+	return ok && command.ConfigOnly
 }
 
 // Run dispatches one command line.
@@ -116,12 +153,28 @@ func (r *Registry) Run(ctx context.Context, deps Deps, args []string) error {
 		return fmt.Errorf("usage: devbox <command> [arguments]\n\ncommands:\n%s", r.Help())
 	}
 	if args[0] == "help" {
-		deps.Printf("commands:\n%s", r.Help())
+		if len(args) == 1 {
+			deps.Printf("%s", r.Help())
+			return nil
+		}
+		text, err := r.Describe(args[1])
+		if err != nil {
+			return err
+		}
+		deps.Printf("%s", text)
 		return nil
 	}
 	command, ok := r.Find(args[0])
 	if !ok {
-		return fmt.Errorf("unknown command %q\n\ncommands:\n%s", args[0], r.Help())
+		return fmt.Errorf("unknown command %q\n\n%s", args[0], r.Help())
+	}
+	if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
+		text, err := r.Describe(args[0])
+		if err != nil {
+			return err
+		}
+		deps.Printf("%s", text)
+		return nil
 	}
 	return command.Run(ctx, deps, args[1:])
 }

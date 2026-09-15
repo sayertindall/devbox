@@ -8,9 +8,28 @@ import (
 	"devbox/internal/cli"
 )
 
-// machineUsage is the one place the verb list is written down, so help and the
-// unknown-verb error cannot drift from the table below.
-const machineUsage = "devbox machine <new|start|stop|suspend|resume|list|show|snapshot|fork|schedule|destroy>"
+// machineUsage derives the verb list from the table below, so help, the
+// unknown-verb error, and the verbs themselves cannot drift apart.
+var machineUsage = "devbox machine <" + strings.Join(verbNames(), "|") + ">"
+
+// machineHelp is the flag detail for the verbs that take any.
+const machineHelp = `flags:
+  new        --no-bootstrap        create the box without a startup script
+             --schedule            attach this box's start and stop windows
+  schedule   --start=HH:MM --stop=HH:MM --timezone=ZONE   create the windows
+             --remove              detach and delete the policy
+  destroy    --confirm=<name>      required; the box name again
+             --with-images         also delete the machine images labeled for it
+  snapshot   stops docker and containerd first, then restarts them`
+
+// verbNames is every machine verb name in table order.
+func verbNames() []string {
+	names := make([]string, 0, len(verbs))
+	for _, item := range verbs {
+		names = append(names, item.name)
+	}
+	return names
+}
 
 // verb is one machine action with its help text and its implementation.
 type verb struct {
@@ -42,6 +61,7 @@ func Commands() []cli.Command {
 		Name:    "machine",
 		Summary: "Create, inspect, fork, and destroy boxes",
 		Usage:   machineUsage,
+		Help:    machineHelp,
 		Run:     runMachine,
 	}}
 }

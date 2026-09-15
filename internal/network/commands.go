@@ -17,7 +17,10 @@ func Commands() []cli.Command {
 			Name:    "network",
 			Summary: "Ensure or show the firewall, router, and NAT a box needs",
 			Usage:   "devbox network <ensure|show>",
-			Run:     runNetwork,
+			Help: `ensure creates only what is missing and says what it found.
+show prints the firewall rule, router, NAT, and subnet state.
+A box with external_ip = false needs ensure before it has egress.`,
+			Run: runNetwork,
 		},
 	}
 }

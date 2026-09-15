@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -237,4 +240,122 @@ func TestEveryCommandIsRegisteredOnce(t *testing.T) {
 			t.Fatalf("command %q is missing from the dispatcher", expected)
 		}
 	}
+}
+
+// partialConfig writes the smallest configuration somebody gets from
+// `devbox config init`, with the settings a machine needs still blank.
+func partialConfig(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("DEVBOX_HOME", home)
+	t.Setenv("DEVBOX_DRY_RUN", "1")
+	path := filepath.Join(home, "config.toml")
+	cfg := config.Default()
+	cfg.Project = "example-project"
+	if _, err := config.Init(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// completeConfig writes a configuration with every setting a machine needs.
+func completeConfig(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("DEVBOX_HOME", home)
+	t.Setenv("DEVBOX_DRY_RUN", "1")
+	path := filepath.Join(home, "config.toml")
+	cfg := config.Default()
+	cfg.Project = "example-project"
+	cfg.ServiceAccount = "devbox@example-project.iam.gserviceaccount.com"
+	cfg.BootstrapURL = "gs://bucket/devbox/startup-script.sh"
+	cfg.RemoteUser = "operator"
+	if _, err := config.Init(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestIncompleteConfigurationAllowsOnlyTheCommandsThatSetItUp(t *testing.T) {
+	path := partialConfig(t)
+
+	err := runWith(context.Background(), []string{"machine", "list"})
+	if err == nil {
+		t.Fatal("a command that creates a machine must refuse an incomplete configuration")
+	}
+	for _, expected := range []string{path, "service_account", "blank"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("the refusal must name %q: %v", expected, err)
+		}
+	}
+
+	for _, args := range [][]string{
+		{"tools", "list"},
+		{"help", "machine"},
+		{"version"},
+		{"config", "show"},
+		{"reconcile"},
+	} {
+		line := args
+		captureStdout(t, func() {
+			if err := runWith(context.Background(), line); err != nil {
+				t.Fatalf("devbox %s must work before a project is filled in: %v", strings.Join(line, " "), err)
+			}
+		})
+	}
+}
+
+func TestHelpDescribesOneCommand(t *testing.T) {
+	partialConfig(t)
+	out := captureStdout(t, func() {
+		if err := runWith(context.Background(), []string{"help", "machine"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, expected := range []string{"devbox machine <new|start|", "--confirm=<name>", "--no-bootstrap"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("help does not describe the command (%q missing):\n%s", expected, out)
+		}
+	}
+
+	out = captureStdout(t, func() {
+		if err := runWith(context.Background(), []string{"machine", "--help"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "devbox machine <new|start|") {
+		t.Fatalf("a command must answer --help itself:\n%s", out)
+	}
+}
+
+func TestDryRunRehearsesInsteadOfConnecting(t *testing.T) {
+	completeConfig(t)
+	out := captureStdout(t, func() {
+		if err := runWith(context.Background(), []string{"exec", "dev", "--", "git", "log", "--oneline"}); err != nil {
+			t.Fatalf("a rehearsal must not need a box: %v", err)
+		}
+	})
+	if !strings.Contains(out, "would run: ssh -o BatchMode=yes devbox-dev -- git log --oneline") {
+		t.Fatalf("the rehearsal must print the command it would run:\n%s", out)
+	}
+}
+
+// captureStdout collects what a command line prints, by swapping the process
+// streams the dispatcher writes to.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = writer
+	defer func() { os.Stdout = original }()
+	fn()
+	writer.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

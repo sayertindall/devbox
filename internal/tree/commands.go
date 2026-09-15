@@ -29,12 +29,14 @@ func Commands() []cli.Command {
 			Name:    "push",
 			Summary: "Copy a local working tree to a box under the manifest allowlist",
 			Usage:   "devbox push <name> [path] [--tree <tree>]",
+			Help:    "Only the files the manifest declares are copied; excluded paths never leave this machine.",
 			Run:     push,
 		},
 		{
 			Name:    "pull",
 			Summary: "Apply the tree on a box over the local tree under a rollback journal",
 			Usage:   "devbox pull <name> [path] [--tree <tree>] [--force]",
+			Help:    "Refuses when the local tree changed since the push. --force applies anyway; the rollback journal is kept until the apply verifies.",
 			Run:     pull,
 		},
 		{

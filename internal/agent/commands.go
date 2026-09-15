@@ -16,13 +16,23 @@ import (
 	"devbox/internal/record"
 )
 
-// usage is the one place the agent grammar is written down.
-const usage = `usage:
-  devbox agent start <box> --provider <omp|claude|codex> --task <text> [--tree <name>] [--dir <dir>]
+// usage is the one place the agent grammar is written down. The provider list is
+// rendered from the harness table, so adding a provider cannot leave stale help.
+var usage = `usage:
+  devbox agent start <box> --provider <` + providerList() + `> --task <text> [--tree <name>] [--dir <dir>]
   devbox agent list <box>
   devbox agent logs <box> <id>
   devbox agent attach <box> <id>
   devbox agent stop <box> <id> [--yes]`
+
+// agentHelp is the flag detail for the verbs that take any.
+const agentHelp = `flags:
+  start   --provider <name>   which harness to run, from the table above
+          --task <text>       what it should do; the packet on the box has the rest
+          --tree <name>       work in a pushed tree, default the box's own name
+          --dir <dir>         work in an absolute directory instead
+  stop    --yes               skip the confirmation prompt
+The session runs in tmux, so closing the laptop does not stop it.`
 
 // Commands returns the agent verb.
 func Commands() []cli.Command {
@@ -30,6 +40,7 @@ func Commands() []cli.Command {
 		Name:    "agent",
 		Summary: "Start, list, watch, attach to, and stop agent sessions on a box",
 		Usage:   "devbox agent <start|list|logs|attach|stop> ...",
+		Help:    agentHelp,
 		Run:     dispatch,
 	}}
 }

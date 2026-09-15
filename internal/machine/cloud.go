@@ -73,11 +73,11 @@ func own(ctx context.Context, deps cli.Deps, name box.Name) (box.Facts, error) {
 		return box.Facts{}, err
 	}
 	if !found {
-		return box.Facts{}, fmt.Errorf("box %s does not exist in zone %s", name, deps.Config.Zone)
+		return box.Facts{}, fmt.Errorf("box %s does not exist in zone %s; see devbox machine list, or create it with devbox machine new %s", name, deps.Config.Zone, name)
 	}
 	owner, ok := box.NameFromLabels(facts.Labels)
 	if !ok {
-		return box.Facts{}, fmt.Errorf("instance %s carries no devbox labels; devbox did not create it and will not act on it", name)
+		return box.Facts{}, fmt.Errorf("instance %s carries no devbox labels; devbox did not create it and will not act on it. If it is yours, label it with devbox-name=%s,devbox-managed=true and devbox will adopt it", name, name)
 	}
 	if owner != name {
 		return box.Facts{}, fmt.Errorf("instance %s is labeled for box %s; devbox will not act on it as %s", name, owner, name)

@@ -371,7 +371,7 @@ func TestImageBakeRefusesWhatItCannotCapture(t *testing.T) {
 			reply:   `[{"name":"work","status":"TERMINATED","labels":{"someone":"else"},"disks":[{"deviceName":"devbox-data","boot":false}]}]`,
 			name:    "work",
 			image:   "work-image",
-			wantErr: "not labeled",
+			wantErr: "label it with devbox-name",
 		},
 		{
 			what:    "a box with no data disk",

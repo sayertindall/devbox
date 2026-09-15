@@ -1,9 +1,11 @@
 package access
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"slices"
@@ -12,6 +14,7 @@ import (
 
 	"devbox/internal/box"
 	"devbox/internal/cli"
+	"devbox/internal/config"
 	"devbox/internal/gcloud"
 )
 
@@ -372,5 +375,25 @@ func TestAccessVerbsRefuseAMissingBoxName(t *testing.T) {
 				t.Errorf("error = %v, want the usage line", err)
 			}
 		})
+	}
+}
+
+func TestCopyRehearsesWithoutOpeningASession(t *testing.T) {
+	// A rehearsal must not describe the box, so the opener is wired to fail: if cp
+	// called it, the test would fail rather than print the command.
+	ops := ops{}
+	ops.open = func(context.Context, cli.Deps, box.Name) (Session, error) {
+		return nil, errors.New("a rehearsal must not open a session")
+	}
+	ops.proc = func(context.Context, []string, io.Reader, io.Writer, io.Writer) error { return nil }
+	registry := cli.NewRegistry()
+	registry.Add(commandSet(ops)...)
+	var out bytes.Buffer
+	deps := cli.Deps{Config: config.Default(), Out: &out, Err: &out, DryRun: true}
+	if err := registry.Run(context.Background(), deps, []string{"cp", "dev", "/tmp/a", "/tmp/b"}); err != nil {
+		t.Fatalf("a rehearsal must print and stop: %v", err)
+	}
+	if !strings.Contains(out.String(), "would run: rsync -a --relative /tmp/a devbox-dev:/tmp/b/") {
+		t.Fatalf("the rehearsal must print the copy it would make:\n%s", out.String())
 	}
 }

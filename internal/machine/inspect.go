@@ -1,9 +1,13 @@
 package machine
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
+
+	"strings"
+	"text/tabwriter"
 
 	"devbox/internal/box"
 	"devbox/internal/cli"
@@ -24,7 +28,9 @@ func runList(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	deps.Printf("NAME ZONE STATUS MACHINE ADDRESS")
+	var table bytes.Buffer
+	writer := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(writer, "NAME\tZONE\tSTATUS\tMACHINE\tADDRESS")
 	listed := 0
 	for _, fact := range facts {
 		name, ok := box.NameFromLabels(fact.Labels)
@@ -32,11 +38,14 @@ func runList(ctx context.Context, deps cli.Deps, args []string) error {
 			continue
 		}
 		listed++
-		deps.Printf("%s %s %s %s %s", name, box.ZoneName(fact.Zone), fact.Status, box.MachineTypeName(fact.MachineType), address(fact))
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", name, box.ZoneName(fact.Zone), fact.Status, box.MachineTypeName(fact.MachineType), address(fact))
 	}
+	writer.Flush()
 	if listed == 0 {
 		deps.Printf("no boxes")
+		return nil
 	}
+	deps.Printf("%s", strings.TrimRight(table.String(), "\n"))
 	return nil
 }
 

@@ -111,6 +111,16 @@ func (d Dialer) Open(ctx context.Context, name box.Name) (Session, error) {
 	}, nil
 }
 
+// describeFailure turns a missing box into the two things the operator can do
+// about it, rather than repeating the cloud CLI's own wording.
+func describeFailure(cfg config.Config, name box.Name, err error) error {
+	if gcloud.Missing(err) || strings.Contains(err.Error(), "was not found") {
+		return fmt.Errorf("box %s was not found in project %s zone %s; see devbox machine list, or create it with devbox machine new %s",
+			name, cfg.Project, cfg.Zone, name)
+	}
+	return fmt.Errorf("describe %s: %w", name, err)
+}
+
 // refreshEntry writes the managed Host entry from the box's current addresses.
 //
 // The entry has to be current rather than merely present: a box with no external
@@ -124,11 +134,11 @@ func (d Dialer) refreshEntry(ctx context.Context, name box.Name) error {
 	}
 	out, err := d.Cloud.Run(ctx, describeArgs(d.Config, name)...)
 	if err != nil {
-		return fmt.Errorf("describe %s: %w", name, err)
+		return describeFailure(d.Config, name, err)
 	}
 	facts, err := box.Fact(out)
 	if err != nil {
-		return fmt.Errorf("describe %s: %w", name, err)
+		return describeFailure(d.Config, name, err)
 	}
 	if _, err := writeSSHBlock(path, d.Config, name, facts.ExternalIP()); err != nil {
 		return err

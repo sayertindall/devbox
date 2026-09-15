@@ -118,6 +118,19 @@ func describeArgs(cfg config.Config, name box.Name) []string {
 	}
 }
 
+// dryRun stops an action that needs the box, printing the exact command it would
+// run so a rehearsal stays useful: the operator can paste it by hand. Every verb
+// that would connect or copy asks this first.
+func dryRun(deps cli.Deps, argv ...string) bool {
+	if !deps.DryRun {
+		return false
+	}
+	if len(argv) > 0 {
+		deps.Printf("would run: %s", strings.Join(argv, " "))
+	}
+	return true
+}
+
 // opSSH opens the operator's own connection: a shell, or one command with the
 // terminal streaming through so a long command can be watched and interrupted. A
 // remote command that has flags of its own follows --, which is what keeps the
@@ -138,7 +151,11 @@ func opSSH(o ops) cli.Command {
 				return err
 			}
 			remote := strings.Join(positional[1:], " ")
-			return o.proc(ctx, interactiveArgv(deps.Config.SSHHost(name.String()), remote), deps.Stdin, deps.Out, deps.Err)
+			argv := interactiveArgv(deps.Config.SSHHost(name.String()), remote)
+			if dryRun(deps, argv...) {
+				return nil
+			}
+			return o.proc(ctx, argv, deps.Stdin, deps.Out, deps.Err)
 		},
 	}
 }
@@ -163,6 +180,9 @@ func opExec(o ops) cli.Command {
 			remote := strings.Join(positional[1:], " ")
 			if remote == "" {
 				return usageError(usage)
+			}
+			if dryRun(deps, sshArgv(deps.Config.SSHHost(name.String()), remote)...) {
+				return nil
 			}
 			session, err := o.open(ctx, deps, name)
 			if err != nil {
@@ -196,11 +216,18 @@ func opCopy(o ops) cli.Command {
 			if err != nil {
 				return err
 			}
+			alias := deps.Config.SSHHost(name.String())
+			if *down {
+				if dryRun(deps, downloadArgv(alias, paths[1], paths[2])...) {
+					return nil
+				}
+			} else if dryRun(deps, uploadArgv(alias, paths[1], paths[2])...) {
+				return nil
+			}
 			session, err := o.open(ctx, deps, name)
 			if err != nil {
 				return err
 			}
-			alias := deps.Config.SSHHost(name.String())
 			if *down {
 				if err := session.Download(ctx, paths[1], paths[2]); err != nil {
 					return err
@@ -296,6 +323,10 @@ func opTerminfo(o ops) cli.Command {
 				return err
 			}
 			alias := deps.Config.SSHHost(name.String())
+			if dryRun(deps, sshArgv(alias, "tic -x -")...) {
+				deps.Printf("%s", terminfoFallback)
+				return nil
+			}
 			if err := o.proc(ctx, sshArgv(alias, "tic -x -"), strings.NewReader(entry), deps.Out, deps.Err); err != nil {
 				deps.Printf("%s", terminfoFallback)
 				return fmt.Errorf("install the xterm-ghostty entry on %s: %w", alias, err)

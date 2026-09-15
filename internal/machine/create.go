@@ -112,5 +112,9 @@ func runNew(ctx context.Context, deps cli.Deps, args []string) error {
 	}
 	deps.Printf("created box %s in %s", name, deps.Config.Zone)
 	adoptDataDisk(ctx, deps, name)
+	if !deps.Config.ExternalIP {
+		deps.Printf("next: devbox network ensure (a box without an external address needs NAT for egress)")
+	}
+	deps.Printf("next: devbox ssh %s", name)
 	return nil
 }

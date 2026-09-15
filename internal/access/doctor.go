@@ -327,6 +327,11 @@ func opDoctor(o ops) cli.Command {
 			if err != nil {
 				return err
 			}
+			if dryRun(deps) {
+				deps.Printf("would run %d checks on %s:", len(checkNames()), name)
+				deps.Printf("%s", strings.TrimRight(doctorScript(deps.Config, name), "\n"))
+				return nil
+			}
 			session, err := o.open(ctx, deps, name)
 			if err != nil {
 				return err

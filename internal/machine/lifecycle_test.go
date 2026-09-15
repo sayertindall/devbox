@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -64,9 +65,24 @@ func TestListShowsOnlyBoxesDevboxCreated(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("list argv\n got %#v\nwant %#v", got, want)
 	}
+	// The columns are aligned with a tabwriter, so the assertion is on what the
+	// table reports rather than on how wide the padding happens to be.
 	out := p.out.String()
-	if !strings.Contains(out, "box1 us-central1-a RUNNING n2-standard-16 10.128.0.2") {
-		t.Fatalf("list does not report the box and its address: %s", out)
+	header, row := "", ""
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) > 0 && fields[0] == "NAME":
+			header = strings.Join(fields, " ")
+		case len(fields) > 0 && fields[0] == "box1":
+			row = strings.Join(fields, " ")
+		}
+	}
+	if header != "NAME ZONE STATUS MACHINE ADDRESS" {
+		t.Fatalf("list header is missing a column: %q", header)
+	}
+	if row != "box1 us-central1-a RUNNING n2-standard-16 10.128.0.2" {
+		t.Fatalf("list does not report the box and its address: %q", row)
 	}
 	if strings.Contains(out, "proto-vm") {
 		t.Fatalf("list reported an instance devbox did not create: %s", out)
@@ -223,5 +239,27 @@ func TestScheduleRefusesWithoutWindows(t *testing.T) {
 	}
 	if hasCall(p.cloud, "resource-policies", "create") {
 		t.Fatalf("a half-specified schedule created a policy:\n%s", p.cloud.Argv())
+	}
+}
+
+func TestNewTellsTheOperatorWhatComesNext(t *testing.T) {
+	p := newProbe(t)
+	p.cloud.Reply = func(args []string) (string, error) {
+		if len(args) > 2 && args[1] == "instances" && args[2] == "describe" {
+			return "", errors.New("ERROR: The resource was not found")
+		}
+		return "[]", nil
+	}
+	if err := p.run(t, "new", "box1"); err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	out := p.out.String()
+	// A box with no external address needs NAT before it can reach anything, and
+	// the operator should not have to read the source to learn that.
+	if !strings.Contains(out, "devbox network ensure") {
+		t.Fatalf("new does not mention the network step:\n%s", out)
+	}
+	if !strings.Contains(out, "devbox ssh box1") {
+		t.Fatalf("new does not say how to reach the box:\n%s", out)
 	}
 }

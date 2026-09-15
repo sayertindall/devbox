@@ -201,3 +201,40 @@ func TestStatePathStaysInsideTheStateRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestInitWritesFromNothingAndReportsTheBlankSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.toml")
+	cfg := Default()
+	cfg.Project = "example-project"
+	missing, err := Init(path, cfg)
+	if err != nil {
+		t.Fatalf("init must work on a machine with no state directory yet: %v", err)
+	}
+	if len(missing) == 0 {
+		t.Fatal("init must report the settings that are still blank")
+	}
+	blank := strings.Join(missing, " ")
+	if !strings.Contains(blank, "service_account") || !strings.Contains(blank, "bootstrap_url") {
+		t.Fatalf("the report must name what a machine cannot be created without: %s", blank)
+	}
+	// The written file must be readable, and it must be readable before every
+	// setting is filled in: that is the whole point of init.
+	if _, err := Parse(mustRead(t, path)); err != nil {
+		t.Fatalf("a freshly written file must parse: %v", err)
+	}
+	if _, err := Decode(mustRead(t, path)); err == nil {
+		t.Fatal("an incomplete configuration must still be refused by the strict reader")
+	}
+	if _, err := Init(path, Config{}); err == nil {
+		t.Fatal("init without a project must fail")
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}

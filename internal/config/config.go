@@ -497,6 +497,9 @@ func (c Config) ProjectFlag() string { return "--project=" + c.Project }
 func (c Config) ZoneFlag() string { return "--zone=" + c.Zone }
 
 func writeFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create configuration directory: %w", err)
+	}
 	file, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create configuration temporary file: %w", err)

@@ -18,10 +18,12 @@ import (
 
 // openSession opens a shell session on a box. Only snapshot needs one, to stop
 // the storage services before the disk is captured; the access slice owns the
-// real ssh transport. It is a variable so a test can run snapshot against a
-// recording session and no test needs a live box.
-var openSession = func(deps cli.Deps, name box.Name) (access.Session, error) {
-	return access.Dialer{Config: deps.Config, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}.Open(name)
+// real ssh transport and reads the box's current address back through the cloud
+// executor. It is a variable so a test can run snapshot against a recording
+// session and no test needs a live box.
+var openSession = func(ctx context.Context, deps cli.Deps, name box.Name) (access.Session, error) {
+	dialer := access.Dialer{Config: deps.Config, Cloud: deps.Cloud, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}
+	return dialer.Open(ctx, name)
 }
 
 // instanceArgs is the prefix every zonal instance call shares, so the argument
@@ -84,7 +86,8 @@ func own(ctx context.Context, deps cli.Deps, name box.Name) (box.Facts, error) {
 }
 
 // block refuses a mutation while a previous one for the same box never
-// concluded, and names the records so the operator can reconcile them by hand.
+// concluded, and names the records and the command that clears them, because
+// only the operator can say what the cloud actually holds.
 func block(deps cli.Deps, names ...box.Name) error {
 	var lines []string
 	for _, name := range names {
@@ -94,12 +97,13 @@ func block(deps cli.Deps, names ...box.Name) error {
 		}
 		for _, entry := range entries {
 			lines = append(lines, fmt.Sprintf("  %s %s %s: gcloud %s", entry.ID, entry.Kind, entry.State, strings.Join(entry.Args, " ")))
+			lines = append(lines, fmt.Sprintf("    clear it with: devbox reconcile %s --note \"what the cloud holds\"", entry.ID))
 		}
 	}
 	if len(lines) == 0 {
 		return nil
 	}
-	return fmt.Errorf("unresolved records block this box; check the cloud state and reconcile them first:\n%s", strings.Join(lines, "\n"))
+	return fmt.Errorf("unresolved records block this box; reconcile them first:\n%s", strings.Join(lines, "\n"))
 }
 
 // mutate runs one recorded cloud mutation and returns the command output.
@@ -142,6 +146,7 @@ func conclude(deps cli.Deps, entry record.Record, result string, err error) erro
 	}
 	deps.Errorf("record %s is unresolved; check the resource before the next mutation:", entry.ID)
 	deps.Errorf("  gcloud %s", strings.Join(entry.Args, " "))
+	deps.Errorf("  clear it with: devbox reconcile %s --note \"what the cloud holds\"", entry.ID)
 	return err
 }
 

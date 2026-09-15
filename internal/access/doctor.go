@@ -319,11 +319,15 @@ func opDoctor(o ops) cli.Command {
 		Summary: "Check that a box is ready to run work",
 		Usage:   usage,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
-			name, err := boxName(args, usage)
+			positional, err := cli.Parse(deps.FlagSet("doctor"), args)
+			if err != nil {
+				return parseError(err, usage)
+			}
+			name, err := onlyBox(positional, usage)
 			if err != nil {
 				return err
 			}
-			session, err := o.open(deps, name)
+			session, err := o.open(ctx, deps, name)
 			if err != nil {
 				return err
 			}

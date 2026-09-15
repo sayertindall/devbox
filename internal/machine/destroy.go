@@ -25,7 +25,6 @@ type machineImageFacts struct {
 
 // diskFacts is the label set of one persistent disk.
 type diskFacts struct {
-	Name   string            `json:"name"`
 	Labels map[string]string `json:"labels"`
 }
 
@@ -81,11 +80,15 @@ func claimsDisk(ctx context.Context, deps cli.Deps, disk string, name box.Name) 
 		}
 		return false, err
 	}
-	var facts diskFacts
+	// gcloud reports a single describe as a one-element list, like an instance.
+	var facts []diskFacts
 	if err := json.Unmarshal([]byte(out), &facts); err != nil {
 		return false, fmt.Errorf("decode disk %s: %w", disk, err)
 	}
-	owner, ok := box.NameFromLabels(facts.Labels)
+	if len(facts) == 0 {
+		return false, nil
+	}
+	owner, ok := box.NameFromLabels(facts[0].Labels)
 	return ok && owner == name, nil
 }
 
@@ -97,13 +100,14 @@ func runDestroy(ctx context.Context, deps cli.Deps, args []string) error {
 	set := deps.FlagSet("destroy")
 	confirm := set.String("confirm", "", "repeat the box name to confirm the deletion")
 	withImages := set.Bool("with-images", false, "also delete the machine images labeled for this box")
-	if err := set.Parse(args); err != nil {
+	names, err := cli.Parse(set, args)
+	if err != nil {
 		return err
 	}
-	if set.NArg() != 1 {
+	if len(names) != 1 {
 		return fmt.Errorf("usage: devbox machine destroy <name> --confirm=<name> [--with-images]")
 	}
-	name, err := box.ParseName(set.Arg(0))
+	name, err := box.ParseName(names[0])
 	if err != nil {
 		return err
 	}

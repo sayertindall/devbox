@@ -29,7 +29,7 @@ type dialer struct {
 	sessions map[string]*session
 }
 
-func (d dialer) Open(name box.Name) (Session, error) {
+func (d dialer) Open(_ context.Context, name box.Name) (Session, error) {
 	if s, ok := d.sessions[name.String()]; ok {
 		return s, nil
 	}

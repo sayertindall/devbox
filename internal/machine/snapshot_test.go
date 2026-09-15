@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"regexp"
@@ -125,13 +126,40 @@ func TestSnapshotRefusesAStoppedBox(t *testing.T) {
 	}
 }
 
+// TestSnapshotDryRunLeavesTheBoxAlone proves a dry run prints the capture as an
+// argument vector without stopping the services on a live box, and without
+// writing a record for a mutation that never happened.
+func TestSnapshotDryRunLeavesTheBoxAlone(t *testing.T) {
+	p := newProbe(t)
+	p.deps.DryRun = true
+	p.describeFor("RUNNING", "box1")
+	session := &access.Recording{}
+	withSession(t, session)
+	if err := p.run(t, "snapshot", "box1"); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(session.Commands) != 0 {
+		t.Fatalf("a dry run touched the box: %q", session.Commands)
+	}
+	if got := call(t, p.cloud, "snapshots", "create"); !strings.HasPrefix(got[3], "box1-") {
+		t.Fatalf("dry run did not show the snapshot: %q", got)
+	}
+	entries, err := p.records.All()
+	if err != nil {
+		t.Fatalf("read records: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a dry run wrote records: %+v", entries)
+	}
+}
+
 // TestSnapshotFailsWhenTheSessionCannotBeOpened covers the transport refusal: the
 // error must reach the operator rather than being reported as a snapshot.
 func TestSnapshotFailsWhenTheSessionCannotBeOpened(t *testing.T) {
 	p := newProbe(t)
 	p.describeFor("RUNNING", "box1")
 	previous := openSession
-	openSession = func(cli.Deps, box.Name) (access.Session, error) {
+	openSession = func(context.Context, cli.Deps, box.Name) (access.Session, error) {
 		return nil, errors.New("ssh: no route to host")
 	}
 	t.Cleanup(func() { openSession = previous })

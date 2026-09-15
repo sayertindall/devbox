@@ -104,8 +104,8 @@ func run() error {
 // tools slice declares, so tool management does not import the SSH layer.
 type boxDialer struct{ deps cli.Deps }
 
-func (d boxDialer) Open(name box.Name) (tools.Session, error) {
-	session, err := access.Dialer{Config: d.deps.Config, Out: d.deps.Out, Err: d.deps.Err, Stdin: d.deps.Stdin}.Open(name)
+func (d boxDialer) Open(ctx context.Context, name box.Name) (tools.Session, error) {
+	session, err := access.Dialer{Config: d.deps.Config, Cloud: d.deps.Cloud, Out: d.deps.Out, Err: d.deps.Err, Stdin: d.deps.Stdin}.Open(ctx, name)
 	if err != nil {
 		return nil, err
 	}

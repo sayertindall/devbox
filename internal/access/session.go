@@ -19,6 +19,7 @@ import (
 
 	"devbox/internal/box"
 	"devbox/internal/config"
+	"devbox/internal/gcloud"
 )
 
 // Session runs commands and moves files on one box.
@@ -71,20 +72,36 @@ func (r *Recording) Download(_ context.Context, remote, localDir string) error {
 // with the alias devbox writes into the SSH configuration.
 type Dialer struct {
 	Config config.Config
-	Out    io.Writer
-	Err    io.Writer
-	Stdin  io.Reader
+	// Cloud, when set, lets Open refresh the managed SSH entry from what the
+	// cloud says the box is right now, so a caller never has to remember to run
+	// ssh-config after a start or a resume.
+	Cloud gcloud.Executor
+	Out   io.Writer
+	Err   io.Writer
+	Stdin io.Reader
 }
 
 // Open returns a Session for one box.
 //
-// Open reads no cloud state and writes no file: the alias it uses is the one
-// devbox ssh-config wrote, and whether that alias reaches the box through an IAP
-// tunnel was decided there from the box's own addresses.
-func (d Dialer) Open(name box.Name) (Session, error) {
-	parsed, err := box.ParseName(string(name))
+// With a cloud executor the box's Host entry is refreshed from what the cloud
+// says the box is right now: the address a box answers on is not fixed, because
+// one that has an external address can be given a different one across a stop and
+// a start, and one without an address keeps the entry it already has, so a second
+// Open of an unchanged box rewrites nothing. Without a cloud executor Open writes
+// no file and uses whatever entry the operator already has.
+//
+// The dialer's output streams carry a copy in progress; the input stream belongs
+// to the verbs that hand the operator's terminal to ssh, which is why a captured
+// run sends none.
+func (d Dialer) Open(ctx context.Context, name box.Name) (Session, error) {
+	parsed, err := box.ParseName(name.String())
 	if err != nil {
 		return nil, err
+	}
+	if d.Cloud != nil {
+		if err := d.refreshEntry(ctx, parsed); err != nil {
+			return nil, err
+		}
 	}
 	return sshSession{
 		alias: d.Config.SSHHost(parsed.String()),
@@ -92,6 +109,31 @@ func (d Dialer) Open(name box.Name) (Session, error) {
 		out:   d.Out,
 		err:   d.Err,
 	}, nil
+}
+
+// refreshEntry writes the managed Host entry from the box's current addresses.
+//
+// The entry has to be current rather than merely present: a box with no external
+// address is reached through the IAP tunnel, which resolves the instance name and
+// survives a stop and a start, while a box with an address can come back on a
+// different one.
+func (d Dialer) refreshEntry(ctx context.Context, name box.Name) error {
+	path, err := sshConfigPath()
+	if err != nil {
+		return err
+	}
+	out, err := d.Cloud.Run(ctx, describeArgs(d.Config, name)...)
+	if err != nil {
+		return fmt.Errorf("describe %s: %w", name, err)
+	}
+	facts, err := box.Fact(out)
+	if err != nil {
+		return fmt.Errorf("describe %s: %w", name, err)
+	}
+	if _, err := writeSSHBlock(path, d.Config, name, facts.ExternalIP()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // proc runs one local process with separate arguments, never through a shell, so

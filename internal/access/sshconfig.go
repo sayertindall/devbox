@@ -267,6 +267,10 @@ func hostStanza(cfg config.Config, name box.Name, externalIP string) stanza {
 	if cfg.SSHKey != "" {
 		lines = append(lines, "  IdentityFile "+cfg.SSHKey)
 	}
+	// accept-new records the box's host key on the first connection. Without it
+	// the non-interactive runs below fail on an unknown key, and this box is one
+	// devbox created in the operator's own project.
+	lines = append(lines, "  StrictHostKeyChecking accept-new")
 	return stanza{aliases: alias, lines: append(lines, "  ServerAliveInterval 30")}
 }
 

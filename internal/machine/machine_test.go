@@ -116,7 +116,7 @@ func findCommand(name string) (cli.Command, bool) {
 func withSession(t *testing.T, session access.Session) {
 	t.Helper()
 	previous := openSession
-	openSession = func(cli.Deps, box.Name) (access.Session, error) { return session, nil }
+	openSession = func(context.Context, cli.Deps, box.Name) (access.Session, error) { return session, nil }
 	t.Cleanup(func() { openSession = previous })
 }
 

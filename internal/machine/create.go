@@ -84,13 +84,14 @@ func runNew(ctx context.Context, deps cli.Deps, args []string) error {
 	set := deps.FlagSet("new")
 	noBootstrap := set.Bool("no-bootstrap", false, "create a box with no startup script")
 	schedule := set.Bool("schedule", false, "attach this box's schedule policy")
-	if err := set.Parse(args); err != nil {
+	names, err := cli.Parse(set, args)
+	if err != nil {
 		return err
 	}
-	if set.NArg() != 1 {
+	if len(names) != 1 {
 		return fmt.Errorf("usage: devbox machine new <name> [--no-bootstrap] [--schedule]")
 	}
-	name, err := box.ParseName(set.Arg(0))
+	name, err := box.ParseName(names[0])
 	if err != nil {
 		return err
 	}

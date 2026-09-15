@@ -3,7 +3,6 @@ package access
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,15 +17,15 @@ import (
 // session for a box and a local process with the operator's own streams. Tests
 // substitute both, so no access command needs a live box or a real ssh.
 type ops struct {
-	open func(deps cli.Deps, name box.Name) (Session, error)
+	open func(ctx context.Context, deps cli.Deps, name box.Name) (Session, error)
 	proc proc
 }
 
 // realOps is the production wiring of ops.
 func realOps() ops {
 	return ops{
-		open: func(deps cli.Deps, name box.Name) (Session, error) {
-			return Dialer{Config: deps.Config, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}.Open(name)
+		open: func(ctx context.Context, deps cli.Deps, name box.Name) (Session, error) {
+			return Dialer{Config: deps.Config, Cloud: deps.Cloud, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}.Open(ctx, name)
 		},
 		proc: runProcess,
 	}
@@ -59,7 +58,11 @@ func opSSHConfig() cli.Command {
 		Summary: "Write the box's Host entry into the operator's SSH configuration",
 		Usage:   usage,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
-			name, err := boxName(args, usage)
+			positional, err := cli.Parse(deps.FlagSet("ssh-config"), args)
+			if err != nil {
+				return parseError(err, usage)
+			}
+			name, err := onlyBox(positional, usage)
 			if err != nil {
 				return err
 			}
@@ -82,7 +85,8 @@ func opSSHConfig() cli.Command {
 			if err != nil {
 				return fmt.Errorf("read box %s: %w", name, err)
 			}
-			block, err := writeSSHBlock(path, deps.Config, name, facts.ExternalIP())
+			externalIP := facts.ExternalIP()
+			block, err := writeSSHBlock(path, deps.Config, name, externalIP)
 			if err != nil {
 				return err
 			}
@@ -94,7 +98,7 @@ func opSSHConfig() cli.Command {
 			for _, line := range block.Lines {
 				deps.Printf("%s", line)
 			}
-			if facts.ExternalIP() == "" {
+			if externalIP == "" {
 				deps.Printf("connections to %s run through an IAP tunnel", name)
 			}
 			return nil
@@ -104,7 +108,9 @@ func opSSHConfig() cli.Command {
 
 // describeArgs reads one instance back. It is the only way devbox learns which of
 // the two SSH entries a box needs, because a box with an external address is
-// reached directly and a box without one needs the tunnel.
+// reached directly and a box without one needs the tunnel. devbox ssh-config and
+// every Open that has a cloud executor read a box this way, so there is one
+// vector to keep right.
 func describeArgs(cfg config.Config, name box.Name) []string {
 	return []string{
 		"compute", "instances", "describe", name.String(),
@@ -113,7 +119,9 @@ func describeArgs(cfg config.Config, name box.Name) []string {
 }
 
 // opSSH opens the operator's own connection: a shell, or one command with the
-// terminal streaming through so a long command can be watched and interrupted.
+// terminal streaming through so a long command can be watched and interrupted. A
+// remote command that has flags of its own follows --, which is what keeps the
+// local parser from claiming them.
 func opSSH(o ops) cli.Command {
 	const usage = "devbox ssh <name> [-- command]"
 	return cli.Command{
@@ -121,12 +129,16 @@ func opSSH(o ops) cli.Command {
 		Summary: "Open a shell on a box, or run one command through it",
 		Usage:   usage,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
-			name, err := boxName(args, usage)
+			positional, err := cli.Parse(deps.FlagSet("ssh"), args)
+			if err != nil {
+				return parseError(err, usage)
+			}
+			name, err := firstBox(positional, usage)
 			if err != nil {
 				return err
 			}
-			argv := interactiveArgv(deps.Config.SSHHost(name.String()), command(args[1:]))
-			return o.proc(ctx, argv, deps.Stdin, deps.Out, deps.Err)
+			remote := strings.Join(positional[1:], " ")
+			return o.proc(ctx, interactiveArgv(deps.Config.SSHHost(name.String()), remote), deps.Stdin, deps.Out, deps.Err)
 		},
 	}
 }
@@ -140,15 +152,19 @@ func opExec(o ops) cli.Command {
 		Summary: "Run one command on a box and print its combined output",
 		Usage:   usage,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
-			name, err := boxName(args, usage)
+			positional, err := cli.Parse(deps.FlagSet("exec"), args)
+			if err != nil {
+				return parseError(err, usage)
+			}
+			name, err := firstBox(positional, usage)
 			if err != nil {
 				return err
 			}
-			remote := command(args[1:])
+			remote := strings.Join(positional[1:], " ")
 			if remote == "" {
 				return usageError(usage)
 			}
-			session, err := o.open(deps, name)
+			session, err := o.open(ctx, deps, name)
 			if err != nil {
 				return err
 			}
@@ -159,9 +175,7 @@ func opExec(o ops) cli.Command {
 	}
 }
 
-// opCopy moves one path in either direction. The direction flag may be written
-// before or after the paths, because an operator fixing up a command tends to
-// append it.
+// opCopy moves one path in either direction.
 func opCopy(o ops) cli.Command {
 	const usage = "devbox cp <name> <source> <target> [--down]"
 	return cli.Command{
@@ -169,23 +183,25 @@ func opCopy(o ops) cli.Command {
 		Summary: "Copy a file or directory between this machine and a box",
 		Usage:   usage,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
-			paths, down, err := splitDirection(args)
+			set := deps.FlagSet("cp")
+			down := set.Bool("down", false, "copy from the box to this machine")
+			paths, err := cli.Parse(set, args)
 			if err != nil {
-				return err
+				return parseError(err, usage)
 			}
 			if len(paths) != 3 {
 				return usageError(usage)
 			}
-			name, err := boxName(paths, usage)
+			name, err := firstBox(paths, usage)
 			if err != nil {
 				return err
 			}
-			session, err := o.open(deps, name)
+			session, err := o.open(ctx, deps, name)
 			if err != nil {
 				return err
 			}
 			alias := deps.Config.SSHHost(name.String())
-			if down {
+			if *down {
 				if err := session.Download(ctx, paths[1], paths[2]); err != nil {
 					return err
 				}
@@ -211,15 +227,20 @@ func opForward() cli.Command {
 		Summary: "Open an IAP tunnel from a local port to a box",
 		Usage:   usage,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
-			rest, port, err := splitPort(args)
+			set := deps.FlagSet("forward")
+			port := set.Int("port", 0, "the local port to forward; the configuration's port by default")
+			positional, err := cli.Parse(set, args)
+			if err != nil {
+				return parseError(err, usage)
+			}
+			name, err := onlyBox(positional, usage)
 			if err != nil {
 				return err
 			}
-			name, err := boxName(rest, usage)
-			if err != nil {
-				return err
+			if *port < 0 || *port > 65535 {
+				return fmt.Errorf("invalid port %d\nusage: %s", *port, usage)
 			}
-			argv := forwardArgv(deps.Config, name, port)
+			argv := forwardArgv(deps.Config, name, *port)
 			deps.Printf("gcloud %s", strings.Join(argv, " "))
 			if deps.DryRun {
 				return nil
@@ -231,8 +252,8 @@ func opForward() cli.Command {
 }
 
 // forwardArgv opens a tunnel that listens on the operator's machine. The port is
-// the configured one unless the operator names another, and the tunnel is opened
-// on localhost so nothing on the network can reach it.
+// the configured one unless the operator names another, and the tunnel listens on
+// localhost so nothing else on the network can reach it.
 func forwardArgv(cfg config.Config, name box.Name, port int) []string {
 	if port <= 0 {
 		port = cfg.PortForward
@@ -261,7 +282,11 @@ func opTerminfo(o ops) cli.Command {
 		Summary: "Install the Ghostty xterm-ghostty entry on a box",
 		Usage:   usage,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
-			name, err := boxName(args, usage)
+			positional, err := cli.Parse(deps.FlagSet("terminfo"), args)
+			if err != nil {
+				return parseError(err, usage)
+			}
+			name, err := onlyBox(positional, usage)
 			if err != nil {
 				return err
 			}
@@ -288,13 +313,13 @@ const terminfoFallback = "SetEnv TERM=xterm-256color"
 
 // infocmpCandidates are tried in order. The system infocmp on macOS is older than
 // the Ghostty entry and reports the terminal as unknown, so the Homebrew ncurses
-// build, which tracks current terminfo, is the second choice; the path simply does
-// not exist elsewhere.
+// build, which tracks current terminfo, is the second choice; that path simply
+// does not exist elsewhere.
 var infocmpCandidates = []string{"infocmp", "/opt/homebrew/opt/ncurses/bin/infocmp"}
 
 // terminfoEntry renders the local xterm-ghostty entry in the source form tic
-// reads. --x is required on both ends: without it the extended capabilities the
-// Ghostty entry relies on are dropped.
+// reads. The extended form is required on both ends: without it the capabilities
+// the Ghostty entry relies on are dropped.
 func terminfoEntry(ctx context.Context, o ops) (string, error) {
 	var problems []string
 	for _, candidate := range infocmpCandidates {
@@ -322,20 +347,25 @@ func opEditors() cli.Command {
 		Summary: "Print the editor URLs that open a directory on a box",
 		Usage:   usage,
 		Run: func(_ context.Context, deps cli.Deps, args []string) error {
-			if len(args) == 0 || len(args) > 2 {
+			positional, err := cli.Parse(deps.FlagSet("editors"), args)
+			if err != nil {
+				return parseError(err, usage)
+			}
+			if len(positional) < 1 || len(positional) > 2 {
 				return usageError(usage)
 			}
-			name, err := boxName(args, usage)
+			name, err := firstBox(positional, usage)
 			if err != nil {
 				return err
 			}
-			path := remoteHome(deps.Config)
-			if len(args) == 2 {
-				path = args[1]
+			home := remoteHome(deps.Config)
+			path := home
+			if len(positional) == 2 {
+				path = positional[1]
 				if !strings.HasPrefix(path, "/") {
 					// A relative path is read from the home directory, which is
 					// also where a path-less command lands.
-					path = strings.TrimSuffix(remoteHome(deps.Config), "/") + "/" + path
+					path = strings.TrimSuffix(home, "/") + "/" + path
 				}
 			}
 			alias := deps.Config.SSHHost(name.String())
@@ -355,75 +385,30 @@ func remoteHome(cfg config.Config) string {
 	return "/home/" + cfg.RemoteUser
 }
 
-// boxName parses the box argument that opens every access verb.
-func boxName(args []string, usage string) (box.Name, error) {
-	if len(args) == 0 {
+// firstBox parses the box name that opens a verb's positional arguments.
+func firstBox(positional []string, usage string) (box.Name, error) {
+	if len(positional) == 0 {
 		return "", usageError(usage)
 	}
-	return box.ParseName(args[0])
+	return box.ParseName(positional[0])
 }
 
-// command joins the operator's own words after a box name into one remote
-// command. It is one string because the box's shell, not this one, decides how
-// the words are split, so an operator who quotes a command keeps it exact.
-func command(args []string) string {
-	rest := args
-	for len(rest) > 0 && rest[0] == "--" {
-		rest = rest[1:]
+// onlyBox parses the single box name a verb takes and refuses anything else.
+func onlyBox(positional []string, usage string) (box.Name, error) {
+	if len(positional) != 1 {
+		return "", usageError(usage)
 	}
-	return strings.Join(rest, " ")
+	return box.ParseName(positional[0])
 }
 
-// splitDirection pulls the copy direction out of the argument list.
-func splitDirection(args []string) ([]string, bool, error) {
-	var paths []string
-	down := false
-	for _, arg := range args {
-		switch {
-		case arg == "--down":
-			down = true
-		case arg == "--":
-		case strings.HasPrefix(arg, "-"):
-			return nil, false, fmt.Errorf("unknown flag %q\nusage: devbox cp <name> <source> <target> [--down]", arg)
-		default:
-			paths = append(paths, arg)
-		}
-	}
-	return paths, down, nil
+// parseError adds the usage line to the argument parser's complaint, so the
+// operator sees the form devbox expects and not only the flag it rejected.
+func parseError(err error, usage string) error {
+	return fmt.Errorf("%w\nusage: %s", err, usage)
 }
 
-// splitPort pulls the forwarded port out of the argument list.
-func splitPort(args []string) ([]string, int, error) {
-	var rest []string
-	port := 0
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		value := ""
-		switch {
-		case arg == "--":
-			continue
-		case arg == "--port":
-			if index+1 >= len(args) {
-				return nil, 0, errors.New("--port needs a port number\nusage: devbox forward <name> [--port <port>]")
-			}
-			index++
-			value = args[index]
-		case strings.HasPrefix(arg, "--port="):
-			value = strings.TrimPrefix(arg, "--port=")
-		case strings.HasPrefix(arg, "-"):
-			return nil, 0, fmt.Errorf("unknown flag %q\nusage: devbox forward <name> [--port <port>]", arg)
-		default:
-			rest = append(rest, arg)
-			continue
-		}
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed <= 0 || parsed > 65535 {
-			return nil, 0, fmt.Errorf("invalid port %q", value)
-		}
-		port = parsed
-	}
-	return rest, port, nil
-}
+// usageError reports a command line devbox cannot act on.
+func usageError(usage string) error { return fmt.Errorf("usage: %s", usage) }
 
 // printOutput writes remote output exactly as it came back, adding the newline a
 // command without one would otherwise lose against the caller's next line.
@@ -436,6 +421,3 @@ func printOutput(deps cli.Deps, out string) {
 		fmt.Fprintln(deps.Out)
 	}
 }
-
-// usageError reports a command line devbox cannot act on.
-func usageError(usage string) error { return fmt.Errorf("usage: %s", usage) }

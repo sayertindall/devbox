@@ -48,13 +48,14 @@ func runSchedule(ctx context.Context, deps cli.Deps, args []string) error {
 	stop := set.String("stop", "", "stop window, HH:MM in the policy timezone")
 	timezone := set.String("timezone", "UTC", "IANA timezone the windows are expressed in")
 	remove := set.Bool("remove", false, "detach the schedule and delete the policy")
-	if err := set.Parse(args); err != nil {
+	names, err := cli.Parse(set, args)
+	if err != nil {
 		return err
 	}
-	if set.NArg() != 1 {
+	if len(names) != 1 {
 		return fmt.Errorf("usage: devbox machine schedule <name> [--start=HH:MM --stop=HH:MM] [--timezone=ZONE] [--remove]")
 	}
-	name, err := box.ParseName(set.Arg(0))
+	name, err := box.ParseName(names[0])
 	if err != nil {
 		return err
 	}

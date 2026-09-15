@@ -122,8 +122,11 @@ func TestForkKeepsTheImageWhenTheNewBoxFails(t *testing.T) {
 	p.cloud.Reply = func(args []string) (string, error) {
 		switch {
 		case isVerb(args, "create"):
-			return "", missing("machine type")
+			return "", missing("machine type n9-standard-99")
 		case isVerb(args, "describe"):
+			if args[3] == "source" {
+				return instanceJSON("source", "RUNNING"), nil
+			}
 			return "", missing("instance")
 		}
 		return "", nil

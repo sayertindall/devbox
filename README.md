@@ -23,6 +23,12 @@ Everything runs on your own GCE project. There is no service, no account, and no
 | Change the toolchain on a running box | `devbox tools apply dev` |
 | Remove everything | `devbox machine destroy dev --confirm=dev` |
 
+## Runbook
+
+[RUNBOOK.md](RUNBOOK.md) is the step-by-step path: the IAM you grant once, the
+configuration, the first box, the daily loop, pausing and what it costs,
+recovery, and destroying.
+
 ## Install
 
 Needs `gcloud` authenticated against your project, plus `ssh`, `rsync`, `git`,

@@ -61,9 +61,13 @@ upload  writes it to the state directory, and with --bucket publishes it and
 		},
 		{
 			Name:    "image",
-			Summary: "Bake a reusable custom image from the data disk of a box",
+			Summary: "Bake an image of a box's data disk",
 			Usage:   "devbox image bake <name> <image>",
-			Run:     runImage,
+			Help: `The image captures the data disk, which is not bootable: use it to hand a
+prepared cache or data disk to another instance. To clone a whole box, which
+captures the boot disk and the instance configuration too, use devbox machine
+fork. Docker and containerd are stopped for the capture and restarted after.`,
+			Run: runImage,
 		},
 		{
 			Name:       "toolchain",

@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -214,8 +215,16 @@ func TestRenderMatchesDeployArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", artifactPath, err)
 	}
+	if os.Getenv("DEVBOX_UPDATE_ARTIFACT") == "1" {
+		// The artifact is generated, never hand-edited: change the template, then
+		//   DEVBOX_UPDATE_ARTIFACT=1 go test -run TestRenderMatchesDeployArtifact ./internal/bootstrap/
+		if err := os.WriteFile(artifactPath, []byte(script), 0o644); err != nil {
+			t.Fatalf("update %s: %v", artifactPath, err)
+		}
+		return
+	}
 	if string(artifact) != script {
-		t.Errorf("%s does not match Render(config.Default()): run the renderer and write the file again", artifactPath)
+		t.Errorf("%s does not match Render(config.Default()): regenerate it with DEVBOX_UPDATE_ARTIFACT=1 go test -run TestRenderMatchesDeployArtifact ./internal/bootstrap/", artifactPath)
 	}
 	parseScript(t, string(artifact))
 }
@@ -326,10 +335,19 @@ func TestRenderCarriesNoSecrets(t *testing.T) {
 	if strings.Contains(script, cfg.SSHKey) {
 		t.Errorf("the startup script carries the operator's ssh key %q", cfg.SSHKey)
 	}
-	lower := strings.ToLower(script)
-	for _, shape := range []string{"private key", "password", "secret", "token", "api_key", "credential", "ssh_key"} {
-		if strings.Contains(lower, shape) {
-			t.Errorf("the startup script contains something shaped like a secret: %q", shape)
+	// The guard is for secret material, not for words: the script legitimately names
+	// 1password-cli, which is a package rather than a value. What must never appear
+	// is a key, or a value assigned to something secret-shaped.
+	for _, pattern := range []struct {
+		what string
+		re   *regexp.Regexp
+	}{
+		{"a private key block", regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)},
+		{"a value assigned to a secret-shaped name", regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key|credential|auth)\s*=\s*\S`)},
+		{"a long opaque token", regexp.MustCompile(`\b[A-Za-z0-9+/_-]{40,}={0,2}\b`)},
+	} {
+		if found := pattern.re.FindString(script); found != "" {
+			t.Errorf("the startup script contains %s: %q", pattern.what, found)
 		}
 	}
 }

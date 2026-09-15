@@ -218,14 +218,21 @@ if [ ! -x /usr/local/bin/mise ]; then
 	curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 fi
 log 'phase tools: installing the pinned toolchain'
+run_as_login mise use -g 1password-cli@2.39.0
+run_as_login mise use -g ast-grep@0.45.3
+run_as_login mise use -g atuin@18.22.0
+run_as_login mise use -g bun@1.4.2
+run_as_login mise use -g chezmoi@2.72.2
 run_as_login mise use -g conftest@0.70.0
 run_as_login mise use -g cosign@3.1.3
 run_as_login mise use -g cue@0.17.1
 run_as_login mise use -g dagger@0.21.9
+run_as_login mise use -g fd@10.5.0
 run_as_login mise use -g flux2@2.9.5
 run_as_login mise use -g gh@2.100.0
 run_as_login mise use -g go@1.26.5
 run_as_login mise use -g helm@3.16.3
+run_as_login mise use -g herdr@0.9.0
 run_as_login mise use -g hunk@0.19.0
 run_as_login mise use -g jq@1.8.2
 run_as_login mise use -g just@1.42.4
@@ -236,7 +243,9 @@ run_as_login mise use -g opentofu@1.12.6
 run_as_login mise use -g oras@1.3.4
 run_as_login mise use -g pnpm@12.4.1
 run_as_login mise use -g python@3.12.14
+run_as_login mise use -g ripgrep@15.2.0
 run_as_login mise use -g rust@1.98.0
+run_as_login mise use -g starship@1.26.0
 run_as_login mise use -g talosctl@1.14.0
 run_as_login mise use -g uv@0.8.9
 expose_shims
@@ -250,6 +259,26 @@ PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$LOGIN_HOME/.
 ENVIRONMENT
 if [ -x "$LOGIN_HOME/.local/share/mise/shims/pnpm" ]; then
 	run_as_login "$LOGIN_HOME/.local/share/mise/shims/pnpm" config set store-dir "$PNPM_STORE"
+fi
+
+# The pinned tools include a prompt and a shell history, and an installed binary
+# is not a working shell: both need one line in the login shell's rc file. The
+# block is written once, between markers, and every line is guarded, so a shell
+# that lacks either tool still starts.
+log 'phase shell: wiring the prompt and the shell history'
+SHELL_RC="$LOGIN_HOME/.bashrc"
+if [ ! -f "$SHELL_RC" ]; then
+	install -o "$LOGIN_USER" -g "$LOGIN_USER" -m 0644 /dev/null "$SHELL_RC"
+fi
+if ! grep -qF '>>> devbox shell >>>' "$SHELL_RC"; then
+	cat >> "$SHELL_RC" <<'DEVBOSHELL'
+
+# >>> devbox shell >>>
+command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
+command -v atuin >/dev/null 2>&1 && eval "$(atuin init bash)"
+# <<< devbox shell <<<
+DEVBOSHELL
+	log 'wired the prompt and the shell history into .bashrc'
 fi
 
 log "phase harness: installing $HARNESS_PACKAGE at $HARNESS_VERSION with npm"

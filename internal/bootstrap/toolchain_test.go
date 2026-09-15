@@ -12,7 +12,16 @@ import (
 // expectation and the implementation are the same value.
 func TestDefaultToolsPinsEveryTool(t *testing.T) {
 	want := []string{
+		"1password-cli",
+		"ast-grep",
+		"atuin",
+		"bun",
+		"chezmoi",
 		"conftest",
+		"fd",
+		"herdr",
+		"ripgrep",
+		"starship",
 		"cosign",
 		"cue",
 		"dagger",

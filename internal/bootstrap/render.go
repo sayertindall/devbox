@@ -419,6 +419,26 @@ if [ -x "$LOGIN_HOME/.local/share/mise/shims/pnpm" ]; then
 	run_as_login "$LOGIN_HOME/.local/share/mise/shims/pnpm" config set store-dir "$PNPM_STORE"
 fi
 
+# The pinned tools include a prompt and a shell history, and an installed binary
+# is not a working shell: both need one line in the login shell's rc file. The
+# block is written once, between markers, and every line is guarded, so a shell
+# that lacks either tool still starts.
+log 'phase shell: wiring the prompt and the shell history'
+SHELL_RC="$LOGIN_HOME/.bashrc"
+if [ ! -f "$SHELL_RC" ]; then
+	install -o "$LOGIN_USER" -g "$LOGIN_USER" -m 0644 /dev/null "$SHELL_RC"
+fi
+if ! grep -qF '>>> devbox shell >>>' "$SHELL_RC"; then
+	cat >> "$SHELL_RC" <<'DEVBOSHELL'
+
+# >>> devbox shell >>>
+command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
+command -v atuin >/dev/null 2>&1 && eval "$(atuin init bash)"
+# <<< devbox shell <<<
+DEVBOSHELL
+	log 'wired the prompt and the shell history into .bashrc'
+fi
+
 log "phase harness: installing $HARNESS_PACKAGE at $HARNESS_VERSION with npm"
 NPM_SHIM="$LOGIN_HOME/.local/share/mise/shims/npm"
 if [ ! -x "$NPM_SHIM" ]; then

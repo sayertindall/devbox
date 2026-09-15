@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -255,5 +257,23 @@ func TestOpenReplacesAnAddressTheBoxNoLongerHas(t *testing.T) {
 	}
 	if strings.Contains(raw, "10.0.0.9") {
 		t.Errorf("the old address survived:\n%s", raw)
+	}
+}
+
+// TestDialerDryRunLeavesTheSSHConfigurationAlone proves a rehearsal writes nothing
+// on the operator's machine, which is the same promise the cloud mutations make.
+func TestDialerDryRunLeavesTheSSHConfigurationAlone(t *testing.T) {
+	path := homeWithSSH(t)
+	var out bytes.Buffer
+	cloud := &gcloud.Fake{Reply: func([]string) (string, error) { return instanceJSON(t, "alpha", ""), nil }}
+	dialer := Dialer{Config: testConfig(), Cloud: cloud, DryRun: true, Out: &out}
+	if _, err := dialer.Open(context.Background(), "alpha"); err != nil {
+		t.Fatalf("open in a dry run: %v", err)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("a dry run created %s", path)
+	}
+	if !strings.Contains(out.String(), "would refresh the Host entry") {
+		t.Fatalf("the dry run did not say what it would write: %q", out.String())
 	}
 }

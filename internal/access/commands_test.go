@@ -34,7 +34,9 @@ func instanceJSON(t *testing.T, name, externalIP string) string {
 			{"networkIP": "10.0.0.2", "accessConfigs": accessConfigs},
 		},
 	}
-	data, err := json.Marshal([]any{instance})
+	// One object: a describe reports one instance, and a list reports an array of
+	// them, so the fixture has to be the shape the verb actually gets.
+	data, err := json.Marshal(instance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +160,7 @@ func TestForwardDefaultsToTheStandardPortWhenTheConfigurationNamesNone(t *testin
 func TestSSHStreamsTheOperatorsTerminal(t *testing.T) {
 	recorder := &procRecorder{reply: func(procCall) (string, error) { return "builder@alpha:~$ \n", nil }}
 	deps, out, _ := testDeps(testConfig(), &gcloud.Fake{})
-	if err := commandFor(t, ops{proc: recorder.run}, "ssh").Run(context.Background(), deps, []string{"alpha"}); err != nil {
+	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "ssh").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("ssh: %v", err)
 	}
 	want := []string{"ssh", "devbox-alpha"}
@@ -174,7 +176,7 @@ func TestSSHRunsOneCommandWhenTheOperatorNamesOne(t *testing.T) {
 	recorder := &procRecorder{}
 	deps, _, _ := testDeps(testConfig(), &gcloud.Fake{})
 	args := []string{"alpha", "--", "journalctl -u docker --no-pager | tail -5"}
-	if err := commandFor(t, ops{proc: recorder.run}, "ssh").Run(context.Background(), deps, args); err != nil {
+	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "ssh").Run(context.Background(), deps, args); err != nil {
 		t.Fatalf("ssh: %v", err)
 	}
 	want := []string{"ssh", "devbox-alpha", "--", "journalctl -u docker --no-pager | tail -5"}
@@ -257,7 +259,7 @@ func TestTerminfoInstallsTheLocalEntryOnTheBox(t *testing.T) {
 		return "", nil
 	}}
 	deps, out, _ := testDeps(testConfig(), &gcloud.Fake{})
-	if err := commandFor(t, ops{proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
+	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("terminfo: %v", err)
 	}
 	want := [][]string{
@@ -293,7 +295,7 @@ func TestTerminfoPrefersTheHomebrewInfocmpWhenTheSystemOneFails(t *testing.T) {
 		}
 	}}
 	deps, _, _ := testDeps(testConfig(), &gcloud.Fake{})
-	if err := commandFor(t, ops{proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
+	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("terminfo: %v", err)
 	}
 	want := [][]string{
@@ -316,7 +318,7 @@ func TestTerminfoReportsTheFallbackWhenNoInfocmpHasTheEntry(t *testing.T) {
 		return "", errors.New("unknown terminal type")
 	}}
 	deps, out, _ := testDeps(testConfig(), &gcloud.Fake{})
-	err := commandFor(t, ops{proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"})
+	err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"})
 	if err == nil {
 		t.Fatal("an unknown terminal must be reported")
 	}
@@ -395,5 +397,51 @@ func TestCopyRehearsesWithoutOpeningASession(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "would run: rsync -a --relative /tmp/a devbox-dev:/tmp/b/") {
 		t.Fatalf("the rehearsal must print the copy it would make:\n%s", out.String())
+	}
+}
+
+// TestSSHRefreshesTheHostEntryForTheBox covers the step every verb that runs ssh
+// itself has to take: the entry is written from what the cloud says right now, so
+// an alias that exists in the configuration always points at the live box.
+func TestSSHRefreshesTheHostEntryForTheBox(t *testing.T) {
+	recorder := &procRecorder{}
+	var reached []box.Name
+	o := ops{
+		open: func(_ context.Context, _ cli.Deps, name box.Name) (Session, error) {
+			reached = append(reached, name)
+			return nil, nil
+		},
+		proc: recorder.run,
+	}
+	deps, _, _ := testDeps(testConfig(), &gcloud.Fake{})
+	if err := commandFor(t, o, "ssh").Run(context.Background(), deps, []string{"alpha", "--", "hostname"}); err != nil {
+		t.Fatalf("ssh: %v", err)
+	}
+	if len(reached) != 1 || reached[0].String() != "alpha" {
+		t.Fatalf("ssh ran without refreshing the Host entry for alpha: %v", reached)
+	}
+	if len(recorder.calls) != 1 {
+		t.Fatalf("ssh ran %d local processes, want one", len(recorder.calls))
+	}
+}
+
+// TestSSHDoesNotRunWhenTheBoxCannotBeReached proves a missing box fails as a
+// missing box: ssh never runs, so the operator never sees a DNS error about a
+// name that only exists inside the configuration.
+func TestSSHDoesNotRunWhenTheBoxCannotBeReached(t *testing.T) {
+	recorder := &procRecorder{}
+	o := ops{
+		open: func(context.Context, cli.Deps, box.Name) (Session, error) {
+			return nil, errors.New("box alpha was not found in project example-project zone us-central1-a")
+		},
+		proc: recorder.run,
+	}
+	deps, _, _ := testDeps(testConfig(), &gcloud.Fake{})
+	err := commandFor(t, o, "ssh").Run(context.Background(), deps, []string{"alpha"})
+	if err == nil || !strings.Contains(err.Error(), "was not found") {
+		t.Fatalf("ssh with an unreachable box = %v, want the box's own error", err)
+	}
+	if len(recorder.calls) != 0 {
+		t.Fatalf("ssh ran %d local processes for a box it could not reach", len(recorder.calls))
 	}
 }

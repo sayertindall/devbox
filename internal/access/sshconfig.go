@@ -252,6 +252,27 @@ func mergeStanza(entries []stanza, alias string, fresh stanza) []stanza {
 	return kept
 }
 
+// loginKey is the private key an OS Login box accepts. OS Login ignores the
+// keys in instance metadata and accepts only the ones in the operator's own
+// profile, so an entry that names a random local identity is refused. The key
+// gcloud registers for its own ssh command is the one that is there, which is why
+// it is the default: an operator who has run gcloud compute ssh once already has
+// it, and the configuration can still name a different one.
+func loginKey(cfg config.Config) string {
+	if cfg.SSHKey != "" {
+		return cfg.SSHKey
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, ".ssh", "google_compute_engine")
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
 // hostStanza renders the devbox entry for one box.
 func hostStanza(cfg config.Config, name box.Name, externalIP string) stanza {
 	alias := cfg.SSHHost(name.String())
@@ -264,8 +285,8 @@ func hostStanza(cfg config.Config, name box.Name, externalIP string) stanza {
 		lines = append(lines, "  ProxyCommand "+proxyCommand(cfg))
 	}
 	lines = append(lines, "  User "+cfg.RemoteUser)
-	if cfg.SSHKey != "" {
-		lines = append(lines, "  IdentityFile "+cfg.SSHKey)
+	if key := loginKey(cfg); key != "" {
+		lines = append(lines, "  IdentityFile "+key)
 	}
 	// accept-new records the box's host key on the first connection. Without it
 	// the non-interactive runs below fail on an unknown key, and this box is one

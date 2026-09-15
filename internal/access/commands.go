@@ -25,10 +25,21 @@ type ops struct {
 func realOps() ops {
 	return ops{
 		open: func(ctx context.Context, deps cli.Deps, name box.Name) (Session, error) {
-			return Dialer{Config: deps.Config, Cloud: deps.Cloud, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}.Open(ctx, name)
+			return Dialer{Config: deps.Config, Cloud: deps.Cloud, DryRun: deps.DryRun, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}.Open(ctx, name)
 		},
 		proc: runProcess,
 	}
+}
+
+// reach opens the box so its Host entry is current, then returns the alias for a
+// verb that runs ssh itself. Opening a session is the refresh, and it is the only
+// path that knows the box exists: without it ssh would fail on a name that
+// resolves nowhere, which is what a missing entry looks like from here.
+func reach(ctx context.Context, o ops, deps cli.Deps, name box.Name) (string, error) {
+	if _, err := o.open(ctx, deps, name); err != nil {
+		return "", err
+	}
+	return deps.Config.SSHHost(name.String()), nil
 }
 
 // Commands returns the access verbs.
@@ -153,7 +164,11 @@ func opSSH(o ops) cli.Command {
 				return err
 			}
 			remote := strings.Join(positional[1:], " ")
-			argv := interactiveArgv(deps.Config.SSHHost(name.String()), remote)
+			alias, err := reach(ctx, o, deps, name)
+			if err != nil {
+				return err
+			}
+			argv := interactiveArgv(alias, remote)
 			if dryRun(deps, argv...) {
 				return nil
 			}
@@ -328,7 +343,10 @@ func opTerminfo(o ops) cli.Command {
 				deps.Printf("%s", terminfoFallback)
 				return err
 			}
-			alias := deps.Config.SSHHost(name.String())
+			alias, err := reach(ctx, o, deps, name)
+			if err != nil {
+				return err
+			}
 			if dryRun(deps, sshArgv(alias, "tic -x -")...) {
 				deps.Printf("%s", terminfoFallback)
 				return nil

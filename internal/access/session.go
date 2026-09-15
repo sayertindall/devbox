@@ -76,9 +76,12 @@ type Dialer struct {
 	// cloud says the box is right now, so a caller never has to remember to run
 	// ssh-config after a start or a resume.
 	Cloud gcloud.Executor
-	Out   io.Writer
-	Err   io.Writer
-	Stdin io.Reader
+	// DryRun keeps Open from touching the operator's files, because a rehearsal
+	// that rewrote the SSH configuration would be a mutation like any other.
+	DryRun bool
+	Out    io.Writer
+	Err    io.Writer
+	Stdin  io.Reader
 }
 
 // Open returns a Session for one box.
@@ -128,6 +131,12 @@ func describeFailure(cfg config.Config, name box.Name, err error) error {
 // survives a stop and a start, while a box with an address can come back on a
 // different one.
 func (d Dialer) refreshEntry(ctx context.Context, name box.Name) error {
+	if d.DryRun {
+		if d.Out != nil {
+			fmt.Fprintf(d.Out, "would refresh the Host entry for %s in the SSH configuration\n", d.Config.SSHHost(name.String()))
+		}
+		return nil
+	}
 	path, err := sshConfigPath()
 	if err != nil {
 		return err

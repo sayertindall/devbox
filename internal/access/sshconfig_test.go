@@ -260,3 +260,39 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 		t.Errorf("%s has mode %04o, want %04o", path, got, want)
 	}
 }
+
+// TestEntryNamesTheKeyOSLoginAccepts covers the key that a box with OS Login
+// enabled will actually accept: the one gcloud registered, unless the
+// configuration names another.
+func TestEntryNamesTheKeyOSLoginAccepts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	key := filepath.Join(home, ".ssh", "google_compute_engine")
+	if err := os.MkdirAll(filepath.Dir(key), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig()
+	lines := hostStanza(cfg, box.Name("alpha"), "").lines
+	if !slices.Contains(lines, "  IdentityFile "+key) {
+		t.Fatalf("the entry does not name the OS Login key:\n%s", strings.Join(lines, "\n"))
+	}
+	cfg.SSHKey = "/keys/mine"
+	if named := hostStanza(cfg, box.Name("alpha"), "").lines; !slices.Contains(named, "  IdentityFile /keys/mine") {
+		t.Fatalf("a named key must win over the default:\n%s", strings.Join(named, "\n"))
+	}
+}
+
+// TestEntryNamesNoKeyWhenThereIsNone keeps the entry honest: a path that does not
+// exist would make ssh fail with a message about a missing file instead of about
+// the key it cannot use.
+func TestEntryNamesNoKeyWhenThereIsNone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, line := range hostStanza(testConfig(), box.Name("alpha"), "").lines {
+		if strings.HasPrefix(line, "  IdentityFile") {
+			t.Fatalf("the entry names a key that does not exist: %s", line)
+		}
+	}
+}

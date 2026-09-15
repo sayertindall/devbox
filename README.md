@@ -36,18 +36,35 @@ devbox config init --project <project-id>
 devbox help <command>   # a command's usage and flags
 ```
 
-`devbox config init` writes `~/.devbox/config.toml`. Fill in `service_account`, then:
+`devbox config init` writes `~/.devbox/config.toml` and lists the settings still
+blank. Set `service_account`, which is the identity the box runs as, then:
 
 ```sh
-devbox network ensure   # firewall rule for IAP SSH, cloud router, NAT for egress
-devbox machine new dev  # creates the box, which runs the startup script on boot
-devbox ssh dev          # the SSH entry is written automatically on first use
+devbox bootstrap upload --bucket gs://<bucket>   # publish the script and record bootstrap_url
+devbox network ensure                            # firewall for IAP SSH, router, NAT
+devbox machine new dev                           # creates the box, which bootstraps itself
+devbox ssh dev                                   # the SSH entry is written on first use
 ```
+
+`bootstrap upload` is what sets `bootstrap_url`, so it is the one blank setting you
+do not have to edit by hand. Under `--dry-run` it prints the url it would record
+instead, which is why a rehearsal of the later steps wants that url set by hand. A box created without a startup script starts bare;
+`machine new --no-bootstrap` does that on purpose.
+
+Until the configuration names a project and the settings a machine needs, the
+commands that create machines refuse and tell you which settings are blank. Every
+command that works on the file itself, `config`, `tools`, `help`, `version`, and
+`reconcile`, keeps working, so there is no dead end on a fresh machine.
 
 Creating a machine costs money and is your decision; run `devbox --dry-run machine new dev`
 first to read the exact `gcloud` call it would make. `--dry-run` belongs before the
-command name, and every command honors it: a rehearsal prints what it would run and
-touches neither your machine nor the box.
+command name.
+
+Every verb honors it. A rehearsal prints the cloud calls and the remote commands it
+would run, claims nothing it did not do, changes nothing on your machine, and reaches
+no box. A verb that would have to read a box to know what to do (`machine list`,
+`machine show`, `destroy`'s inventory) says that instead of inventing state, and
+`destroy` still insists on `--confirm=<name>` even in a rehearsal.
 
 ## Dependencies
 
@@ -83,7 +100,7 @@ An empty table means the built-in toolchain. There is one rule for that, so an e
 - `devbox agent` start, list, logs, attach, stop
 - `devbox tools` list, add, remove, update, outdated, apply, edit
 - `devbox bootstrap` show, upload; `devbox image bake`; `devbox toolchain`
-- `devbox reconcile`, `devbox config`, `devbox version`
+- `devbox reconcile`, `devbox config`, `devbox version`, `devbox help`
 
 ## Where things live
 
@@ -113,4 +130,8 @@ No test in this repository makes a cloud call or touches a real box; every comma
 
 ```sh
 mise run check    # build, vet, format check, tests
+mise run install  # build to ~/.local/bin/devbox
 ```
+
+[AGENTS.md](AGENTS.md) is the guide for changing this repository: the contracts a
+change has to respect, the conventions, and what the test suite does not verify.

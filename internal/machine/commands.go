@@ -94,6 +94,13 @@ func state(name string) func(context.Context, cli.Deps, []string) error {
 		if err != nil {
 			return err
 		}
+		if deps.DryRun {
+			// A rehearsal has nothing to read: a describe would come back empty and
+			// reporting "does not exist" would be a lie about the operator's cloud.
+			argv := append(instanceArgs(deps.Config, name, boxName.String()), "--quiet")
+			deps.Printf("would run: gcloud %s", strings.Join(argv, " "))
+			return nil
+		}
 		if _, err := own(ctx, deps, boxName); err != nil {
 			return err
 		}

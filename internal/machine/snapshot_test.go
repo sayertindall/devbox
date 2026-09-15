@@ -126,9 +126,8 @@ func TestSnapshotRefusesAStoppedBox(t *testing.T) {
 	}
 }
 
-// TestSnapshotDryRunLeavesTheBoxAlone proves a dry run prints the capture as an
-// argument vector without stopping the services on a live box, and without
-// writing a record for a mutation that never happened.
+// TestSnapshotDryRunLeavesTheBoxAlone proves a rehearsal reads nothing, touches
+// nothing, and still shows the operator the exact capture it would take.
 func TestSnapshotDryRunLeavesTheBoxAlone(t *testing.T) {
 	p := newProbe(t)
 	p.deps.DryRun = true
@@ -141,8 +140,17 @@ func TestSnapshotDryRunLeavesTheBoxAlone(t *testing.T) {
 	if len(session.Commands) != 0 {
 		t.Fatalf("a dry run touched the box: %q", session.Commands)
 	}
-	if got := call(t, p.cloud, "snapshots", "create"); !strings.HasPrefix(got[3], "box1-") {
-		t.Fatalf("dry run did not show the snapshot: %q", got)
+	// The rehearsal prints the call rather than making it, so there is nothing to
+	// find in the recorded cloud calls; what matters is what the operator read.
+	out := p.out.String()
+	if !strings.Contains(out, "gcloud compute snapshots create box1") {
+		t.Fatalf("the rehearsal did not show the snapshot call:\n%s", out)
+	}
+	if !strings.Contains(out, "systemctl stop docker containerd") {
+		t.Fatalf("the rehearsal did not show the quiesce it would perform:\n%s", out)
+	}
+	if len(p.cloud.Calls()) != 0 {
+		t.Fatalf("a rehearsal must not call the cloud:\n%s", p.cloud.Argv())
 	}
 	entries, err := p.records.All()
 	if err != nil {

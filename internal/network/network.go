@@ -122,6 +122,11 @@ func subnetDescribeArgs(cfg config.Config) []string {
 // exists reports whether a describe found its resource. A missing resource is a
 // fact rather than an error, which is what makes ensure idempotent.
 func exists(ctx context.Context, deps cli.Deps, argv []string) (bool, error) {
+	if deps.DryRun {
+		// A rehearsal gets an empty answer from every read, and reporting "already
+		// exists" from that would hide the very calls the operator asked to see.
+		return false, nil
+	}
 	if _, err := deps.Cloud.Run(ctx, argv...); err != nil {
 		if gcloud.Missing(err) {
 			return false, nil
@@ -157,7 +162,7 @@ func ensure(ctx context.Context, deps cli.Deps) error {
 		if _, err := deps.Cloud.Run(ctx, step.create...); err != nil {
 			return err
 		}
-		deps.Printf("created %s", step.what)
+		deps.Printf("%s", deps.Outcome("created "+step.what, "would create "+step.what))
 	}
 	return nil
 }

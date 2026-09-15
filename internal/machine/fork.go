@@ -57,6 +57,14 @@ func runFork(ctx context.Context, deps cli.Deps, args []string) error {
 	if source == target {
 		return fmt.Errorf("fork needs two names: %s cannot be forked onto itself", source)
 	}
+	if deps.DryRun {
+		// The image name carries a timestamp, so the rehearsal shows its shape
+		// rather than a name that would differ by the time it ran.
+		image := source.String() + "-<timestamp>"
+		deps.Printf("would run: gcloud %s", strings.Join(imageArgs(deps.Config, image, source), " "))
+		deps.Printf("would run: gcloud %s", strings.Join(forkArgs(deps.Config, target, image), " "))
+		return nil
+	}
 	if err := block(deps, source, target); err != nil {
 		return err
 	}
@@ -79,7 +87,9 @@ func runFork(ctx context.Context, deps cli.Deps, args []string) error {
 		deps.Errorf("  retry the new box by hand: gcloud %s", strings.Join(create, " "))
 		return err
 	}
-	deps.Printf("forked %s to %s from machine image %s", source, target, image)
+	deps.Printf("%s", deps.Outcome(
+		fmt.Sprintf("forked %s to %s from machine image %s", source, target, image),
+		fmt.Sprintf("would fork %s to %s from machine image %s", source, target, image)))
 	adoptDataDisk(ctx, deps, target)
 	return nil
 }

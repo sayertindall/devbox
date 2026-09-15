@@ -28,6 +28,10 @@ func runList(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
+	if deps.DryRun {
+		deps.Printf("a rehearsal cannot show live instances; the call above is what would run")
+		return nil
+	}
 	var table bytes.Buffer
 	writer := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(writer, "NAME\tZONE\tSTATUS\tMACHINE\tADDRESS")
@@ -55,6 +59,10 @@ func runShow(ctx context.Context, deps cli.Deps, args []string) error {
 	name, err := oneName("show", args)
 	if err != nil {
 		return err
+	}
+	if deps.DryRun {
+		deps.Printf("a rehearsal cannot show box %s; the call above is what would run", name)
+		return nil
 	}
 	facts, err := own(ctx, deps, name)
 	if err != nil {

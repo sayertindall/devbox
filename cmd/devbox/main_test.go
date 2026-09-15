@@ -102,10 +102,16 @@ func TestDryRunPrintsTheWholeCallAndRecordsNothing(t *testing.T) {
 	}
 	// The recorded cloud calls are the transcript a dry run would print, because
 	// the printing lives in the real runner and this test drives a recording one.
-	text := cloud.Argv()
-	if !strings.Contains(out.String(), "created box dev") {
-		t.Fatalf("the command must report what it did:\n%s", out.String())
+	argv := cloud.Argv()
+	// A rehearsal must not claim it created anything.
+	text := out.String()
+	if !strings.Contains(text, "would create box dev") {
+		t.Fatalf("the rehearsal must say what it would do:\n%s", text)
 	}
+	if strings.Contains(text, "created box dev") {
+		t.Fatalf("a rehearsal claimed it created the box:\n%s", text)
+	}
+	_ = argv
 	for _, required := range []string{
 		"compute firewall-rules create",
 		"compute routers create",
@@ -118,8 +124,8 @@ func TestDryRunPrintsTheWholeCallAndRecordsNothing(t *testing.T) {
 		"--metadata=enable-oslogin=TRUE,startup-script-url=gs://bucket/devbox/startup-script.sh",
 		"--instance-termination-action=STOP",
 	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("dry run transcript is missing %q:\n%s", required, text)
+		if !strings.Contains(argv, required) {
+			t.Fatalf("the rehearsal is missing the call %q:\n%s", required, argv)
 		}
 	}
 	entries, err := store.All()
@@ -188,29 +194,25 @@ func TestAmbiguousCreateBlocksTheBoxUntilItIsReconciled(t *testing.T) {
 	}
 }
 
-func TestDestroyRequiresTheNameAsConfirmation(t *testing.T) {
-	reply := func(args []string) (string, error) {
-		line := strings.Join(args, " ")
-		switch {
-		case strings.Contains(line, "instances describe"):
-			return instance, nil
-		case strings.Contains(line, "disks describe"):
-			return disk, nil
-		default:
-			return "[]", nil
-		}
-	}
+func TestDestroyShowsWhatIsAtStakeBeforeItRefuses(t *testing.T) {
+	reply := boxWithDataDisk()
 	deps, cloud, out, _ := harness(t, reply, true)
 
 	unconfirmed := runDevbox(t, deps, "machine", "destroy", "dev")
 	if unconfirmed == nil {
 		t.Fatal("destroy without --confirm must refuse")
 	}
-	if !strings.Contains(out.String(), "devbox-data") {
-		t.Fatalf("destroy must print the inventory before it checks the confirmation (error: %v):\n%s", unconfirmed, out.String())
+	if !strings.Contains(out.String(), "would run: gcloud compute instances delete dev") {
+		t.Fatalf("destroy must show what it would do before it checks the confirmation (error: %v):\n%s", unconfirmed, out.String())
 	}
+	if cloud.Ran("instances", "delete") {
+		t.Fatal("a rehearsal must not delete anything")
+	}
+}
 
-	out.Reset()
+func TestDestroyDeletesTheBoxAndTheDiskItLabeled(t *testing.T) {
+	deps, cloud, out, _ := harness(t, boxWithDataDisk(), false)
+
 	if err := runDevbox(t, deps, "machine", "destroy", "dev", "--confirm=dev"); err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +224,24 @@ func TestDestroyRequiresTheNameAsConfirmation(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "deleted instance dev") {
 		t.Fatalf("destroy must report what it removed:\n%s", out.String())
+	}
+}
+
+// boxWithDataDisk answers a describe with a labeled box that has one data disk,
+// and a disk describe that proves the disk carries the box labels.
+func boxWithDataDisk() func([]string) (string, error) {
+	return func(args []string) (string, error) {
+		line := strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "instances describe"):
+			return instance, nil
+		case strings.Contains(line, "disks describe"):
+			return disk, nil
+		case strings.Contains(line, "machine-images list"):
+			return "[]", nil
+		default:
+			return "[]", nil
+		}
 	}
 }
 

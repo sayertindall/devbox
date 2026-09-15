@@ -104,6 +104,14 @@ func add(ctx context.Context, deps cli.Deps, args []string, mise Resolver) error
 	if len(args) != 1 {
 		return fmt.Errorf("usage: devbox tools add <tool>[@version]")
 	}
+	if deps.DryRun {
+		name, version := splitSpec(args[0])
+		if version == "" {
+			version = "<newest>"
+		}
+		deps.Printf("would pin %s %s in %s", name, version, deps.ConfigPath)
+		return nil
+	}
 	name, version := splitSpec(args[0])
 	if name == "" {
 		return fmt.Errorf("usage: devbox tools add <tool>[@version]")
@@ -139,6 +147,10 @@ func remove(deps cli.Deps, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: devbox tools remove <tool>")
 	}
+	if deps.DryRun {
+		deps.Printf("would remove %s from %s", args[0], deps.ConfigPath)
+		return nil
+	}
 	if err := config.RemoveTool(deps.ConfigPath, args[0]); err != nil {
 		return err
 	}
@@ -148,6 +160,10 @@ func remove(deps cli.Deps, args []string) error {
 
 func update(ctx context.Context, deps cli.Deps, args []string, mise, npm Resolver) error {
 	effective, defaults := pins(deps)
+	if deps.DryRun {
+		deps.Printf("would refresh %d pins and the harness in %s", len(effective), deps.ConfigPath)
+		return nil
+	}
 	if defaults {
 		deps.Printf("no [tools] pins declared; the built-in toolchain is in use")
 		deps.Printf("add one with: devbox tools add <tool>")
@@ -286,6 +302,10 @@ func edit(deps cli.Deps) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		return fmt.Errorf("EDITOR is not set; edit %s directly", deps.ConfigPath)
+	}
+	if deps.DryRun {
+		deps.Printf("would open %s in %s", deps.ConfigPath, editor)
+		return nil
 	}
 	command := exec.Command(editor, deps.ConfigPath)
 	command.Stdin = deps.Stdin

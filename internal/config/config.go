@@ -6,7 +6,9 @@
 //
 // Decoding is strict. An unknown key is an error, because a typo in a setting
 // must fail loudly instead of silently provisioning a machine with the wrong
-// shape.
+// shape. Strictness is about the key set, not about completeness: Parse accepts a
+// file the operator is still filling in, Decode requires what a machine needs,
+// and Explain names every blank setting at once.
 package config
 
 import (

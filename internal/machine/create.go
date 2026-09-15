@@ -110,7 +110,9 @@ func runNew(ctx context.Context, deps cli.Deps, args []string) error {
 	if _, err := mutate(ctx, deps, record.KindCreate, name, argv, "instance "+name.String()); err != nil {
 		return err
 	}
-	deps.Printf("created box %s in %s", name, deps.Config.Zone)
+	deps.Printf("%s", deps.Outcome(
+		fmt.Sprintf("created box %s in %s", name, deps.Config.Zone),
+		fmt.Sprintf("would create box %s in %s", name, deps.Config.Zone)))
 	adoptDataDisk(ctx, deps, name)
 	if !deps.Config.ExternalIP {
 		deps.Printf("next: devbox network ensure (a box without an external address needs NAT for egress)")

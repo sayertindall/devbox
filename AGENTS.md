@@ -37,6 +37,11 @@ fork or destroy. Every command exists to make one step of that loop shorter.
 - **Refusals carry the next command.** If a command says no, it says what to run
   next (the record to reconcile, the `push` that is missing, the label to add).
   A refusal without a next action is a bug.
+- **A rehearsal never acts.** Every verb honors `--dry-run`: it prints the calls it
+  would make and stops. It must not reach a box, write a file, record a mutation, or
+  claim an action it did not take, and a verb that needs a read to decide must say so
+  rather than invent the answer. `cli.Deps.Outcome` is the one place that phrases
+  "did" against "would".
 - **Ownership comes from labels.** A box, disk, or image devbox did not label is
   never deleted, started, or snapshotted.
 

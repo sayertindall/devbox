@@ -165,7 +165,8 @@ func bootstrapUpload(ctx context.Context, deps cli.Deps, args []string) error {
 	argv := []string{"storage", "cp", path, object}
 	if deps.DryRun {
 		deps.Printf("dry run: gcloud %s", strings.Join(argv, " "))
-		deps.Printf("dry run: %s is unchanged", deps.ConfigPath)
+		deps.Printf("dry run: %s is unchanged, so bootstrap_url stays blank", deps.ConfigPath)
+		deps.Printf("dry run: a real run records bootstrap_url = %s", object)
 		return nil
 	}
 	if _, err := deps.Cloud.Run(ctx, argv...); err != nil {
@@ -284,7 +285,7 @@ func imageBake(ctx context.Context, deps cli.Deps, args []string) error {
 	if restartErr != nil {
 		return restartErr
 	}
-	deps.Printf("image %s", image)
+	deps.Printf("%s", deps.Outcome("image "+image, "would bake image "+image))
 	return nil
 }
 

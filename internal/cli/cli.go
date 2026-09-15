@@ -40,6 +40,15 @@ func (d Deps) Errorf(format string, args ...any) {
 	fmt.Fprintf(d.Err, format+"\n", args...)
 }
 
+// Outcome phrases what happened. A rehearsal must not claim it did something it
+// only printed, so a dry run gets the second sentence.
+func (d Deps) Outcome(done, would string) string {
+	if d.DryRun {
+		return would
+	}
+	return done
+}
+
 // FlagSet returns a parser for one command, with errors routed to the command's
 // error stream and usage printed by the caller.
 func (d Deps) FlagSet(name string) *flag.FlagSet {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"devbox/internal/box"
 	"devbox/internal/cli"
@@ -111,6 +112,17 @@ func runDestroy(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
+	if deps.DryRun {
+		deps.Printf("would read box %s and the resources labeled for it, then delete only those:", name)
+		deps.Printf("would run: gcloud %s --format=json", strings.Join(instanceArgs(deps.Config, "describe", name.String()), " "))
+		deps.Printf("would run: gcloud compute disks describe <its data disk> %s --format=json", deps.Config.ProjectFlag())
+		deps.Printf("would run: gcloud compute instances delete %s --quiet, then the labeled disk, and any labeled image with --with-images", name)
+		deps.Printf("snapshots are never deleted by destroy")
+		if *confirm != name.String() {
+			return fmt.Errorf("destroy needs --confirm=%s; nothing was deleted", name)
+		}
+		return nil
+	}
 	facts, err := own(ctx, deps, name)
 	if err != nil {
 		return err
@@ -146,6 +158,8 @@ func runDestroy(ctx context.Context, deps cli.Deps, args []string) error {
 	}
 	deps.Printf("  snapshots of %s are never deleted by destroy", name)
 
+	// Shown before it is checked: an operator who has not confirmed still needs to
+	// see exactly what is at stake.
 	if *confirm != name.String() {
 		return fmt.Errorf("destroy needs --confirm=%s; nothing was deleted", name)
 	}
@@ -153,19 +167,19 @@ func runDestroy(ctx context.Context, deps cli.Deps, args []string) error {
 	if _, err := mutate(ctx, deps, record.KindDelete, name, instanceDeleteArgs(deps.Config, name), ""); err != nil {
 		return err
 	}
-	deps.Printf("deleted instance %s", name)
+	deps.Printf("%s", deps.Outcome("deleted instance "+name.String(), "would delete instance "+name.String()))
 	if disk != "" && claimed {
 		if _, err := mutate(ctx, deps, record.KindDelete, name, diskDeleteArgs(deps.Config, disk), ""); err != nil {
 			return err
 		}
-		deps.Printf("deleted data disk %s", disk)
+		deps.Printf("%s", deps.Outcome("deleted data disk "+disk, "would delete data disk "+disk))
 	}
 	if *withImages {
 		for _, image := range images {
 			if _, err := mutate(ctx, deps, record.KindDelete, name, imageDeleteArgs(deps.Config, image), ""); err != nil {
 				return err
 			}
-			deps.Printf("deleted machine image %s", image)
+			deps.Printf("%s", deps.Outcome("deleted machine image "+image, "would delete machine image "+image))
 		}
 	}
 	return nil

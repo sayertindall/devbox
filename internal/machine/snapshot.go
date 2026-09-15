@@ -3,6 +3,7 @@ package machine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"devbox/internal/access"
@@ -40,6 +41,14 @@ func runSnapshot(ctx context.Context, deps cli.Deps, args []string) error {
 	name, err := oneName("snapshot", args)
 	if err != nil {
 		return err
+	}
+	if deps.DryRun {
+		// Everything here is derivable without reading the box, and the source disk
+		// is the one devbox created, so the rehearsal needs no cloud call at all.
+		deps.Printf("would run on %s: %s && %s", name, quiesceStop, quiesceFlush)
+		deps.Printf("would run: gcloud %s", strings.Join(snapshotArgs(deps.Config, name.String(), deps.Config.DataDiskName), " "))
+		deps.Printf("would run on %s: %s", name, quiesceStart)
+		return nil
 	}
 	facts, err := own(ctx, deps, name)
 	if err != nil {
@@ -92,6 +101,6 @@ func runSnapshot(ctx context.Context, deps cli.Deps, args []string) error {
 	if restartErr != nil {
 		return restartErr
 	}
-	deps.Printf("snapshot %s", snapshot)
+	deps.Printf("%s", deps.Outcome("snapshot "+snapshot, "would create snapshot "+snapshot))
 	return nil
 }

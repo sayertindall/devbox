@@ -52,6 +52,7 @@ func TestBlockTunnelsABoxThatHasNoExternalAddress(t *testing.T) {
 		"  HostName alpha",
 		"  ProxyCommand gcloud compute start-iap-tunnel %h %p --listen-on-stdin --project=example-project --zone=us-central1-a --verbosity=warning",
 		"  User builder",
+		"  StrictHostKeyChecking accept-new",
 		"  ServerAliveInterval 30",
 	}
 	if !slices.Equal(block.Lines, want) {
@@ -78,6 +79,7 @@ func TestBlockReachesABoxThatHasAnExternalAddressDirectly(t *testing.T) {
 		"Host devbox-alpha",
 		"  HostName 34.5.6.7",
 		"  User builder",
+		"  StrictHostKeyChecking accept-new",
 		"  ServerAliveInterval 30",
 	}
 	if !slices.Equal(block.Lines, want) {
@@ -158,7 +160,7 @@ func TestWritingOneBoxKeepsTheEntriesOfTheOthers(t *testing.T) {
 		t.Fatalf("rewrite alpha: %v", err)
 	}
 	raw := read(t, path)
-	beta := "Host devbox-beta\n  HostName 34.5.6.7\n  User builder\n  ServerAliveInterval 30\n"
+	beta := "Host devbox-beta\n  HostName 34.5.6.7\n  User builder\n  StrictHostKeyChecking accept-new\n  ServerAliveInterval 30\n"
 	if !strings.Contains(raw, beta) {
 		t.Errorf("rewriting one box changed another:\n%s", raw)
 	}

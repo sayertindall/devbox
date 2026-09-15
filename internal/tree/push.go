@@ -19,7 +19,11 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	const usage = "devbox push <name> [path] [--tree <tree>]"
 	set := deps.FlagSet("push")
 	treeFlag := set.String("tree", "", "tree name on the box (default: the base name of the local path)")
-	name, root, err := resolveTarget(usage, set, args)
+	positional, err := cli.Parse(set, args)
+	if err != nil {
+		return err
+	}
+	name, root, err := resolveTarget(usage, positional)
 	if err != nil {
 		return err
 	}
@@ -42,7 +46,7 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 		return nil
 	}
 
-	session, err := openBox(deps, name)
+	session, err := openBox(ctx, deps, name)
 	if err != nil {
 		return err
 	}
@@ -80,7 +84,7 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 // the manifest beside it, so one upload carries the tree and one carries the
 // declaration the box keeps for it.
 func stageTree(root, treeName string, pushed manifest.Manifest) (_ string, err error) {
-	work, err := newStaging("devbox-push-")
+	work, err := stagingDir("devbox-push-")
 	if err != nil {
 		return "", err
 	}

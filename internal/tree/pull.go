@@ -29,7 +29,11 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 	set := deps.FlagSet("pull")
 	treeFlag := set.String("tree", "", "tree name on the box (default: the base name of the local path)")
 	force := set.Bool("force", false, "apply the tree from the box even when the local tree has changed since the last handoff")
-	name, root, err := resolveTarget(usage, set, args)
+	positional, err := cli.Parse(set, args)
+	if err != nil {
+		return err
+	}
+	name, root, err := resolveTarget(usage, positional)
 	if err != nil {
 		return err
 	}
@@ -59,14 +63,14 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 		return nil
 	}
 
-	session, err := openBox(deps, name)
+	session, err := openBox(ctx, deps, name)
 	if err != nil {
 		return err
 	}
 	if _, err := session.Run(ctx, probeRemote(treeName)); err != nil {
 		return fmt.Errorf("tree %s is not on %s (push it first): %w", treeName, name, err)
 	}
-	work, err := newStaging("devbox-pull-")
+	work, err := stagingDir("devbox-pull-")
 	if err != nil {
 		return err
 	}
@@ -94,17 +98,17 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	journal, err := newJournal(journalDir, root, before, arrived)
+	rollback, err := newJournal(journalDir, root, before, arrived)
 	if err != nil {
 		return err
 	}
 	if err := applyArrived(root, arrivedRoot, before, arrived); err != nil {
-		if restoreErr := journal.restore(root, arrived); restoreErr != nil {
+		if restoreErr := rollback.restore(root, arrived); restoreErr != nil {
 			return fmt.Errorf("%w; the local tree could not be restored: %v; the saved files are in %s", err, restoreErr, journalDir)
 		}
 		return fmt.Errorf("%w; the local tree was restored from the rollback journal", err)
 	}
-	if err := journal.discard(); err != nil {
+	if err := rollback.discard(); err != nil {
 		deps.Errorf("warning: the rollback journal %s was not removed: %v", journalDir, err)
 	}
 

@@ -67,14 +67,19 @@ func parseSessions(output string) []tmuxSession {
 
 // sessionState is the one word that tells the operator what a row means: tmux and
 // the record store answer different questions, and the operator needs both.
+//
+// An unresolved note wins, because that is the only state the operator has to act
+// on. After that tmux is the truth about liveness: a session tmux reports is
+// running whatever the note says, and only a session that is not running is
+// reported from the record alone.
 func sessionState(session sessionRecord, live bool) string {
 	switch {
 	case session.unresolved():
 		return "unresolved"
-	case session.Entry.Result == "":
-		return "failed"
 	case live:
 		return "running"
+	case session.Entry.Result == "":
+		return "failed"
 	default:
 		return "stopped"
 	}
@@ -157,14 +162,4 @@ func display(value string) string {
 		return "-"
 	}
 	return value
-}
-
-// liveRef reports whether tmux reports one session.
-func liveRef(live []tmuxSession, ref string) bool {
-	for _, session := range live {
-		if session.Ref == ref {
-			return true
-		}
-	}
-	return false
 }

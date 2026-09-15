@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,10 +37,10 @@ func TestRenderIncludesRequiredLines(t *testing.T) {
 		{"data disk device", "DATA_DEVICE='/dev/disk/by-id/google-devbox-data'"},
 		{"docker root", "DOCKER_ROOT='" + box.DockerRoot + "'"},
 		{"containerd root", "CONTAINERD_ROOT='" + box.ContainerdRoot + "'"},
-		{"docker daemon data root", `"data-root": "${DOCKER_ROOT}"`},
+		{"docker daemon data root", `"data-root": "` + box.DockerRoot + `"`},
 		{"docker daemon file", "/etc/docker/daemon.json"},
 		{"containerd schema", "version = 2"},
-		{"containerd root setting", `root = "${CONTAINERD_ROOT}"`},
+		{"containerd root setting", `root = "` + box.ContainerdRoot + `"`},
 		{"containerd config file", "/etc/containerd/config.toml"},
 		{"containerd restart", "systemctl restart containerd"},
 		{"docker restart", "systemctl restart docker"},
@@ -141,24 +140,42 @@ func TestRenderInstallsTheOperatorPackages(t *testing.T) {
 	}
 }
 
+// The access layer checks a bootstrapped box with a non-interactive ssh command,
+// which reads no shell profile. The shims are therefore reachable twice: through
+// the links in /usr/local/bin, and through the PATH the environment file gives
+// every session.
+func TestRenderPutsTheShimsOnTheNonInteractivePath(t *testing.T) {
+	script, err := Render(config.Default())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(script, "cat > /etc/environment <<ENVIRONMENT") {
+		t.Error("the startup script does not write the session environment file")
+	}
+	want := `PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$LOGIN_HOME/.local/share/mise/shims"`
+	if !strings.Contains(script, want) {
+		t.Errorf("the session environment does not carry the shims directory:\n%s", want)
+	}
+}
+
 // TestRenderStampGuard pins the shape of the guard: it tests the stamp file,
-// takes the force from the environment, and leaves before any phase runs.
+// takes the force from the environment, leaves before any phase runs, and is the
+// only place the script writes the stamp.
 func TestRenderStampGuard(t *testing.T) {
 	script, err := Render(config.Default())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	guard := `if [ -f "$STAMP" ] && [ "${DEVBOX_BOOTSTRAP_FORCE:-0}" != 1 ]; then`
+	guard := `if [ -f "$STAMP" ] && [ "${DEVBOX_BOOTSTRAP_FORCE:-0}" != 1 ]; then
+	log "already bootstrapped, $STAMP exists; set DEVBOX_BOOTSTRAP_FORCE=1 to rebuild this box"
+	exit 0
+fi`
 	guardIndex := strings.Index(script, guard)
 	if guardIndex < 0 {
 		t.Fatalf("startup script has no stamp guard:\n%s", script)
 	}
-	earlyExit := strings.Index(script[guardIndex:], "exit 0")
-	if earlyExit < 0 {
-		t.Error("the stamp guard does not leave before rebuilding the box")
-	}
-	if first := strings.Index(script, "log 'phase base:"); first > 0 && guardIndex > first {
-		t.Error("the stamp guard runs after the first phase instead of before it")
+	if first := strings.Index(script, "log 'phase base:"); first < 0 || first < guardIndex {
+		t.Error("the stamp guard does not run before the first phase")
 	}
 	if strict := strings.Index(script, "set -euo pipefail"); strict < 0 || strict > guardIndex {
 		t.Error("the stamp guard is not preceded by the strict mode setting")
@@ -170,9 +187,17 @@ func TestRenderStampGuard(t *testing.T) {
 	if count := strings.Count(script, write); count != 1 {
 		t.Fatalf("the stamp is written %d times, want exactly once", count)
 	}
-	trimmed := strings.TrimSpace(script)
-	if !strings.HasSuffix(trimmed, write) {
+	if trimmed := strings.TrimSpace(script); !strings.HasSuffix(trimmed, write) {
 		t.Errorf("the stamp is not the last statement:\n%s", script[len(script)-200:])
+	}
+
+	// Nothing removes a data path, and the one filesystem is created once, only
+	// when the disk has none.
+	if strings.Contains(script, "rm -rf") {
+		t.Error("the startup script removes a path")
+	}
+	if count := strings.Count(script, "mkfs.ext4"); count != 1 {
+		t.Errorf("the startup script formats a filesystem %d times, want once behind the blkid check", count)
 	}
 }
 
@@ -192,6 +217,7 @@ func TestRenderMatchesDeployArtifact(t *testing.T) {
 	if string(artifact) != script {
 		t.Errorf("%s does not match Render(config.Default()): run the renderer and write the file again", artifactPath)
 	}
+	parseScript(t, string(artifact))
 }
 
 // TestRenderWithEmptyToolMap is the configuration a fresh operator has: no pins
@@ -346,11 +372,5 @@ func TestRenderIsDeterministic(t *testing.T) {
 	jqIndex := strings.Index(first, "mise use -g jq@1.8.2")
 	if goIndex < 0 || jqIndex < 0 || goIndex > jqIndex {
 		t.Error("the toolchain is not rendered in sorted order")
-	}
-}
-
-func TestRenderFileMatchesStateDirectoryName(t *testing.T) {
-	if filepath.Ext(startupFileName) != ".sh" {
-		t.Fatalf("the published script %q is not a shell script", startupFileName)
 	}
 }

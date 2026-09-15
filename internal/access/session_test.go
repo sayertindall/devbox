@@ -100,7 +100,7 @@ func commandFor(t *testing.T, o ops, name string) cli.Command {
 // Dialer decided about the alias.
 func sessionOn(t *testing.T, name box.Name, recorder *procRecorder) sshSession {
 	t.Helper()
-	opened, err := Dialer{Config: testConfig()}.Open(name)
+	opened, err := Dialer{Config: testConfig()}.Open(context.Background(), name)
 	if err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}
@@ -184,7 +184,76 @@ func TestUploadAndDownloadArgv(t *testing.T) {
 }
 
 func TestOpenRefusesANameThatIsNotABoxName(t *testing.T) {
-	if _, err := (Dialer{Config: testConfig()}).Open("Not A Box"); err == nil {
+	if _, err := (Dialer{Config: testConfig()}).Open(context.Background(), "Not A Box"); err == nil {
 		t.Fatal("an invalid box name must be refused before anything is executed")
+	}
+}
+
+func TestOpenWritesTheEntryFromTheBoxesAddressInTheCloud(t *testing.T) {
+	path := homeWithSSH(t)
+	cloud := &gcloud.Fake{Reply: func([]string) (string, error) { return instanceJSON(t, "alpha", "34.5.6.7"), nil }}
+	dialer := Dialer{Config: testConfig(), Cloud: cloud}
+	if _, err := dialer.Open(context.Background(), "alpha"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	raw := read(t, path)
+	if !strings.Contains(raw, "  HostName 34.5.6.7\n") {
+		t.Errorf("a session must use the address the box answers on:\n%s", raw)
+	}
+	if strings.Contains(raw, "ProxyCommand") {
+		t.Errorf("a box with an address needs no tunnel:\n%s", raw)
+	}
+	want := []string{
+		"compute", "instances", "describe", "alpha",
+		"--zone=us-central1-a", "--project=example-project", "--format=json",
+	}
+	if got := cloud.Last(); !slices.Equal(got, want) {
+		t.Errorf("gcloud argv = %q, want %q", got, want)
+	}
+}
+
+func TestOpenWritesTheTunnelEntryForABoxWithoutAnAddress(t *testing.T) {
+	path := homeWithSSH(t)
+	cloud := &gcloud.Fake{Reply: func([]string) (string, error) { return instanceJSON(t, "alpha", ""), nil }}
+	dialer := Dialer{Config: testConfig(), Cloud: cloud}
+	ctx := context.Background()
+	if _, err := dialer.Open(ctx, "alpha"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	first := read(t, path)
+	if !strings.Contains(first, "  HostName alpha\n") || !strings.Contains(first, "  ProxyCommand gcloud compute start-iap-tunnel %h %p") {
+		t.Errorf("a box with no address must be reached through the tunnel:\n%s", first)
+	}
+	if _, err := dialer.Open(ctx, "alpha"); err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	if second := read(t, path); second != first {
+		t.Errorf("opening the same box twice rewrote the file:\n%s\n---\n%s", first, second)
+	}
+}
+
+func TestOpenReplacesAnAddressTheBoxNoLongerHas(t *testing.T) {
+	path := homeWithSSH(t)
+	address := "10.0.0.9"
+	cloud := &gcloud.Fake{Reply: func([]string) (string, error) { return instanceJSON(t, "alpha", address), nil }}
+	dialer := Dialer{Config: testConfig(), Cloud: cloud}
+	ctx := context.Background()
+	if _, err := dialer.Open(ctx, "alpha"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if raw := read(t, path); !strings.Contains(raw, "  HostName 10.0.0.9\n") {
+		t.Fatalf("the first address is missing:\n%s", raw)
+	}
+	// The box was stopped and started while it kept its address, then it moved.
+	address = "34.5.6.7"
+	if _, err := dialer.Open(ctx, "alpha"); err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	raw := read(t, path)
+	if !strings.Contains(raw, "  HostName 34.5.6.7\n") {
+		t.Errorf("the session would use a stale address:\n%s", raw)
+	}
+	if strings.Contains(raw, "10.0.0.9") {
+		t.Errorf("the old address survived:\n%s", raw)
 	}
 }

@@ -216,9 +216,11 @@ func checkSafe(kind, value string) error {
 //
 // Two invariants a reader cannot see from a single line:
 //
-//   - Every step is guarded by a file or command check, and every configuration
-//     file is written whole rather than appended to, so a second run on a
-//     half-built machine repairs what is missing and leaves the rest alone.
+//   - Every step is either idempotent by itself (apt-get install, modprobe,
+//     systemctl restart, usermod -aG) or guarded by a file or command check, and
+//     every configuration file is written whole rather than appended to, so a
+//     second run on a half-built machine repairs what is missing and leaves the
+//     rest alone.
 //   - Nothing removes a data path. The only destructive command is mkfs, and it
 //     runs only when the data disk has no filesystem.
 var scriptTemplate = template.Must(template.New("startup").Parse(`#!/bin/bash
@@ -364,12 +366,12 @@ apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io
 install -d -m 0755 /etc/docker /etc/containerd
 cat > /etc/docker/daemon.json <<DOCKER_DAEMON
 {
-  "data-root": "${DOCKER_ROOT}"
+  "data-root": "{{.DockerRoot}}"
 }
 DOCKER_DAEMON
 cat > /etc/containerd/config.toml <<CONTAINERD_CONFIG
 version = 2
-root = "${CONTAINERD_ROOT}"
+root = "{{.ContainerdRoot}}"
 CONTAINERD_CONFIG
 systemctl enable containerd docker
 systemctl restart containerd
@@ -405,6 +407,14 @@ if [ ! -x /usr/local/bin/mise ]; then
 fi
 log 'phase tools: installing the pinned toolchain'
 {{.ToolBlock}}expose_shims
+# A non-interactive ssh command runs bash -c, which reads no profile, so the
+# shims directory is also put on the PATH of every session through
+# /etc/environment. The links in /usr/local/bin stay as the guarantee: they
+# resolve a tool even where an environment file is not applied. devbox owns this
+# file on a box it built, so it is written whole.
+cat > /etc/environment <<ENVIRONMENT
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$LOGIN_HOME/.local/share/mise/shims"
+ENVIRONMENT
 if [ -x "$LOGIN_HOME/.local/share/mise/shims/pnpm" ]; then
 	run_as_login "$LOGIN_HOME/.local/share/mise/shims/pnpm" config set store-dir "$PNPM_STORE"
 fi
@@ -412,7 +422,7 @@ fi
 log "phase harness: installing $HARNESS_PACKAGE at $HARNESS_VERSION with npm"
 NPM_SHIM="$LOGIN_HOME/.local/share/mise/shims/npm"
 if [ ! -x "$NPM_SHIM" ]; then
-	log 'npm is not available, cannot install the harness'
+	log 'npm is not available: pin node in [tools] so the harness can be installed'
 	exit 1
 fi
 run_as_login "$NPM_SHIM" install --global "$HARNESS_PACKAGE@$HARNESS_VERSION"
@@ -424,7 +434,6 @@ fi
 # npm installs into the node prefix, which is not on the PATH of a
 # non-interactive ssh command, so the harness is linked where the shims are.
 ln -sfn "$NPM_PREFIX/bin/$HARNESS_BINARY" "/usr/local/bin/$HARNESS_BINARY"
-expose_shims
 
 log 'phase complete: this box is ready'
 install -d -m 0755 "$(dirname "$STAMP")"

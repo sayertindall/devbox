@@ -87,14 +87,14 @@ func (j *journal) discard() error {
 
 // restore puts the local tree back to the state the journal recorded.
 //
-// Each path either manifest knows about is reset to what the journal recorded:
-// a path the apply landed is removed, a path the apply added is removed, a path
-// whose bytes changed is written back from the saved copy, and a path that was
-// already in its recorded state is left alone. Removing a path the apply never
-// touched would delete local content, so a path is only removed when what is
-// there now is exactly what the arrived manifest declared. It removes the
-// journal only after the tree has been read back and compared against the
-// recorded manifest.
+// It undoes the apply in two passes. First every removal: a path whose bytes the
+// apply changed, and a path the apply added, both go. A path is only removed when
+// what is there now is exactly what the arrived manifest declared, so a path the
+// apply never reached is never touched. Then the directories the apply created go
+// while they are empty, which is what lets a recorded file come back at a path the
+// apply turned into a directory. Only then are the recorded entries written back,
+// from the saved bytes and the recorded targets. The journal is removed only after
+// the tree has been read back and compared against the recorded manifest.
 func (j *journal) restore(root string, arrived manifest.Manifest) error {
 	current, err := manifest.Build(root, manifest.Policy{})
 	if err != nil {
@@ -104,21 +104,19 @@ func (j *journal) restore(root string, arrived manifest.Manifest) error {
 	recorded := entriesByPath(j.before)
 	landed := entriesByPath(arrived)
 
+	var lost []string
 	for _, path := range unionPaths(recorded, landed) {
 		want, wanted := recorded[path]
 		found, present := here[path]
 		switch {
 		case wanted && present && found == want:
 		case wanted:
-			target := filepath.Join(root, path)
 			if present {
-				if err := os.Remove(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				if err := os.Remove(filepath.Join(root, path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return fmt.Errorf("remove %s: %w", path, err)
 				}
 			}
-			if err := j.putBack(root, want); err != nil {
-				return err
-			}
+			lost = append(lost, path)
 		case present && found == landed[path]:
 			// A path only the arrived manifest declared, in exactly the state it
 			// declared: the apply created it, so the rollback removes it.
@@ -131,6 +129,12 @@ func (j *journal) restore(root string, arrived manifest.Manifest) error {
 	if err := j.removeCreatedDirs(root); err != nil {
 		return err
 	}
+	for _, path := range lost {
+		if err := j.putBack(root, recorded[path]); err != nil {
+			return err
+		}
+	}
+
 	after, err := manifest.Build(root, manifest.Policy{})
 	if err != nil {
 		return fmt.Errorf("read the restored tree back: %w", err)
@@ -187,8 +191,8 @@ func (j *journal) removeCreatedDirs(root string) error {
 		}
 		// A directory that still holds something cannot be one the apply created
 		// on its own, and it is not devbox's to empty: it stays, and the
-		// verification below decides whether what is left behind is a difference
-		// the journal has to account for.
+		// comparison at the end of the restore decides whether what is left
+		// behind is a difference the journal has to account for.
 		os.Remove(filepath.Join(root, dir))
 	}
 	return nil

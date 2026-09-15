@@ -67,7 +67,7 @@ expose_shims() {
 
 log 'phase base: installing the archive prerequisites'
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl gnupg
+apt-get install -y --no-install-recommends ca-certificates curl e2fsprogs gnupg kmod
 
 log "phase account: preparing the login user $LOGIN_USER"
 if ! id -u "$LOGIN_USER" >/dev/null 2>&1; then
@@ -141,12 +141,12 @@ apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io
 install -d -m 0755 /etc/docker /etc/containerd
 cat > /etc/docker/daemon.json <<DOCKER_DAEMON
 {
-  "data-root": "${DOCKER_ROOT}"
+  "data-root": "/mnt/data/docker"
 }
 DOCKER_DAEMON
 cat > /etc/containerd/config.toml <<CONTAINERD_CONFIG
 version = 2
-root = "${CONTAINERD_ROOT}"
+root = "/mnt/data/containerd"
 CONTAINERD_CONFIG
 systemctl enable containerd docker
 systemctl restart containerd
@@ -218,28 +218,36 @@ if [ ! -x /usr/local/bin/mise ]; then
 	curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 fi
 log 'phase tools: installing the pinned toolchain'
-run_as_login /usr/local/bin/mise use -g conftest@0.70.0
-run_as_login /usr/local/bin/mise use -g cosign@3.1.3
-run_as_login /usr/local/bin/mise use -g cue@0.17.1
-run_as_login /usr/local/bin/mise use -g dagger@0.21.9
-run_as_login /usr/local/bin/mise use -g flux2@2.9.5
-run_as_login /usr/local/bin/mise use -g gh@2.100.0
-run_as_login /usr/local/bin/mise use -g go@1.26.5
-run_as_login /usr/local/bin/mise use -g helm@3.16.3
-run_as_login /usr/local/bin/mise use -g hunk@0.19.0
-run_as_login /usr/local/bin/mise use -g jq@1.8.2
-run_as_login /usr/local/bin/mise use -g just@1.42.4
-run_as_login /usr/local/bin/mise use -g kubeconform@0.8.0
-run_as_login /usr/local/bin/mise use -g kubectl@1.34.11
-run_as_login /usr/local/bin/mise use -g node@24.18.0
-run_as_login /usr/local/bin/mise use -g opentofu@1.12.6
-run_as_login /usr/local/bin/mise use -g oras@1.3.4
-run_as_login /usr/local/bin/mise use -g pnpm@12.4.1
-run_as_login /usr/local/bin/mise use -g python@3.12.14
-run_as_login /usr/local/bin/mise use -g rust@1.98.0
-run_as_login /usr/local/bin/mise use -g talosctl@1.14.0
-run_as_login /usr/local/bin/mise use -g uv@0.8.9
+run_as_login mise use -g conftest@0.70.0
+run_as_login mise use -g cosign@3.1.3
+run_as_login mise use -g cue@0.17.1
+run_as_login mise use -g dagger@0.21.9
+run_as_login mise use -g flux2@2.9.5
+run_as_login mise use -g gh@2.100.0
+run_as_login mise use -g go@1.26.5
+run_as_login mise use -g helm@3.16.3
+run_as_login mise use -g hunk@0.19.0
+run_as_login mise use -g jq@1.8.2
+run_as_login mise use -g just@1.42.4
+run_as_login mise use -g kubeconform@0.8.0
+run_as_login mise use -g kubectl@1.34.11
+run_as_login mise use -g node@24.18.0
+run_as_login mise use -g opentofu@1.12.6
+run_as_login mise use -g oras@1.3.4
+run_as_login mise use -g pnpm@12.4.1
+run_as_login mise use -g python@3.12.14
+run_as_login mise use -g rust@1.98.0
+run_as_login mise use -g talosctl@1.14.0
+run_as_login mise use -g uv@0.8.9
 expose_shims
+# A non-interactive ssh command runs bash -c, which reads no profile, so the
+# shims directory is also put on the PATH of every session through
+# /etc/environment. The links in /usr/local/bin stay as the guarantee: they
+# resolve a tool even where an environment file is not applied. devbox owns this
+# file on a box it built, so it is written whole.
+cat > /etc/environment <<ENVIRONMENT
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$LOGIN_HOME/.local/share/mise/shims"
+ENVIRONMENT
 if [ -x "$LOGIN_HOME/.local/share/mise/shims/pnpm" ]; then
 	run_as_login "$LOGIN_HOME/.local/share/mise/shims/pnpm" config set store-dir "$PNPM_STORE"
 fi
@@ -247,7 +255,7 @@ fi
 log "phase harness: installing $HARNESS_PACKAGE at $HARNESS_VERSION with npm"
 NPM_SHIM="$LOGIN_HOME/.local/share/mise/shims/npm"
 if [ ! -x "$NPM_SHIM" ]; then
-	log 'npm is not available, cannot install the harness'
+	log 'npm is not available: pin node in [tools] so the harness can be installed'
 	exit 1
 fi
 run_as_login "$NPM_SHIM" install --global "$HARNESS_PACKAGE@$HARNESS_VERSION"
@@ -259,7 +267,6 @@ fi
 # npm installs into the node prefix, which is not on the PATH of a
 # non-interactive ssh command, so the harness is linked where the shims are.
 ln -sfn "$NPM_PREFIX/bin/$HARNESS_BINARY" "/usr/local/bin/$HARNESS_BINARY"
-expose_shims
 
 log 'phase complete: this box is ready'
 install -d -m 0755 "$(dirname "$STAMP")"

@@ -167,8 +167,9 @@ type sshSession struct {
 // Run executes a remote command and returns its combined output.
 //
 // BatchMode keeps a non-interactive run from stopping on a prompt no caller can
-// answer, which is also why the host key must be confirmed once by hand: the
-// first devbox ssh to a new box does that, and every later call reuses it.
+// answer: a key that is not authorized yet fails instead of waiting for a
+// password. The managed entry's accept-new setting records the box's host key on
+// the first connection, so no run stops on a host key question either.
 func (s sshSession) Run(ctx context.Context, command string) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", errors.New("access: remote command is required")

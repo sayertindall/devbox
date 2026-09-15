@@ -31,10 +31,18 @@ const (
 
 // openSession opens a shell session on a box, which bake needs to stop the
 // storage services before it captures the data disk. The access slice owns the
-// real transport; this is a variable so a test can run a bake against a
-// recording session and no test needs a live box.
-var openSession = func(deps cli.Deps, name box.Name) (access.Session, error) {
-	return access.Dialer{Config: deps.Config, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}.Open(name)
+// real transport; it describes the instance through the same recorded cloud the
+// command uses, so a session reaches a box that came back on a different
+// address. This is a variable so a test can run a bake against a recording
+// session and no test needs a live box.
+var openSession = func(ctx context.Context, deps cli.Deps, name box.Name) (access.Session, error) {
+	return access.Dialer{
+		Config: deps.Config,
+		Cloud:  deps.Cloud,
+		Out:    deps.Out,
+		Err:    deps.Err,
+		Stdin:  deps.Stdin,
+	}.Open(ctx, name)
 }
 
 // Commands returns the bootstrap verbs.
@@ -101,11 +109,15 @@ func bootstrapShow(deps cli.Deps, args []string) error {
 func bootstrapUpload(ctx context.Context, deps cli.Deps, args []string) error {
 	set := deps.FlagSet("bootstrap upload")
 	bucket := set.String("bucket", "", "Cloud Storage bucket to publish the script in, for example gs://my-bucket")
-	if err := set.Parse(args); err != nil {
+	rest, err := cli.Parse(set, args)
+	if err != nil {
 		return err
 	}
-	if set.NArg() != 0 {
+	if len(rest) != 0 {
 		return fmt.Errorf("usage: devbox bootstrap upload [--bucket gs://bucket]")
+	}
+	if *bucket != "" && !strings.HasPrefix(*bucket, "gs://") {
+		return fmt.Errorf("bucket %q must be a gs:// location, which is what an instance can fetch a startup script from", *bucket)
 	}
 	script, err := Render(deps.Config)
 	if err != nil {
@@ -209,7 +221,7 @@ func imageBake(ctx context.Context, deps cli.Deps, args []string) error {
 		return err
 	}
 	if len(unresolved) > 0 {
-		return fmt.Errorf("box %s has %d unresolved records; reconcile them before baking an image", name, len(unresolved))
+		return fmt.Errorf("box %s has %d unresolved records; clear them with devbox reconcile --box %s before baking an image", name, len(unresolved), name)
 	}
 	deps.Printf("baking image %s from data disk %s of box %s in %s", image, disk, name, deps.Config.Zone)
 	if facts.Running() {
@@ -218,7 +230,7 @@ func imageBake(ctx context.Context, deps cli.Deps, args []string) error {
 
 	var session access.Session
 	if facts.Running() {
-		session, err = openSession(deps, name)
+		session, err = openSession(ctx, deps, name)
 		if err != nil {
 			return err
 		}

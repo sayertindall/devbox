@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -23,18 +22,22 @@ const usage = `usage:
   devbox agent list <box>
   devbox agent logs <box> <id>
   devbox agent attach <box> <id>
-  devbox agent stop <box> <id> [--yes]
-  devbox agent reconcile <box> <id> [--detail <text>] [--yes]`
+  devbox agent stop <box> <id> [--yes]`
 
 // Commands returns the agent verb.
 func Commands() []cli.Command {
 	return []cli.Command{{
 		Name:    "agent",
 		Summary: "Start, list, watch, attach to, and stop agent sessions on a box",
-		Usage:   "devbox agent <start|list|logs|attach|stop|reconcile> ...",
+		Usage:   "devbox agent <start|list|logs|attach|stop> ...",
 		Run:     dispatch,
 	}}
 }
+
+// opener opens the session devbox reaches a box with. It is a parameter rather
+// than a call inside each verb so every verb is exercisable against a recording
+// session, and so no verb can quietly reach a box its test did not provide.
+type opener func(ctx context.Context, name box.Name) (access.Session, error)
 
 // dispatch routes one agent subcommand. Every subcommand names the box it acts
 // on, so a session is never addressed without saying where it runs.
@@ -42,48 +45,39 @@ func dispatch(ctx context.Context, deps cli.Deps, args []string) error {
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
+	open := func(ctx context.Context, name box.Name) (access.Session, error) {
+		return dialer(deps).Open(ctx, name)
+	}
 	switch args[0] {
 	case "start":
-		return start(ctx, deps, args[1:])
+		return start(ctx, deps, args[1:], open)
 	case "list":
-		return list(ctx, deps, args[1:])
+		return list(ctx, deps, args[1:], open)
 	case "logs":
-		return logs(ctx, deps, args[1:])
+		return logs(ctx, deps, args[1:], open)
 	case "attach":
-		return attach(ctx, deps, args[1:], runExternal)
+		return attach(ctx, deps, args[1:], open, runExternal)
 	case "stop":
-		return stop(ctx, deps, args[1:])
-	case "reconcile":
-		return reconcile(ctx, deps, args[1:])
+		return stop(ctx, deps, args[1:], open)
 	default:
 		return fmt.Errorf("unknown agent subcommand %q\n\n%s", args[0], usage)
 	}
 }
 
-// positional returns the arguments left after flag parsing, refusing anything
-// other than the exact count the subcommand takes.
-func positional(set *flag.FlagSet, count int) ([]string, error) {
-	rest := set.Args()
-	if len(rest) != count {
-		return nil, errors.New(usage)
-	}
-	return rest, nil
-}
-
-// start validates a start, refuses it if an earlier session is unresolved, and
+// start validates a start, refuses it while an earlier session is unresolved, and
 // hands it to the box.
-func start(ctx context.Context, deps cli.Deps, args []string) error {
+func start(ctx context.Context, deps cli.Deps, args []string, open opener) error {
 	set := deps.FlagSet("agent start")
 	provider := set.String("provider", "", "harness to run: "+providerList())
 	task := set.String("task", "", "task the session works on")
 	tree := set.String("tree", "", "tree already pushed to the box to work in")
 	dir := set.String("dir", "", "working directory on the box (default: the tree, otherwise the remote home)")
-	if err := set.Parse(args); err != nil {
+	rest, err := cli.Parse(set, args)
+	if err != nil {
 		return fmt.Errorf("%w\n\n%s", err, usage)
 	}
-	rest, err := positional(set, 1)
-	if err != nil {
-		return err
+	if len(rest) != 1 {
+		return errors.New(usage)
 	}
 	name, err := box.ParseName(rest[0])
 	if err != nil {
@@ -103,7 +97,7 @@ func start(ctx context.Context, deps cli.Deps, args []string) error {
 	if deps.DryRun {
 		return printStart(deps, request, ref)
 	}
-	client, err := dialer(deps).Open(name)
+	client, err := open(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -112,7 +106,7 @@ func start(ctx context.Context, deps cli.Deps, args []string) error {
 
 // printStart reports the exact steps a start would take. A dry run writes no
 // packet, uploads nothing, and records nothing, because a dry run that left a
-// record behind would block the real start it was rehearsing.
+// record behind would block the start it was rehearsing.
 func printStart(deps cli.Deps, request request, ref string) error {
 	local, err := localHandoff(string(request.Box), ref)
 	if err != nil {
@@ -127,12 +121,16 @@ func printStart(deps cli.Deps, request request, ref string) error {
 
 // startSession writes the packet, uploads it, and starts the detached session.
 //
-// The order is the point: the record is written before the first remote call, and
-// the packet is on the box before the session that reads it exists. A session that
-// started first would work from a task it never received.
+// The order is the point: the record is written before the first call that can
+// create anything, and the packet is on the box before the session that reads it
+// exists. A session that started first would work from a task the box never
+// received.
 func startSession(ctx context.Context, deps cli.Deps, client access.Session, request request, ref string) error {
 	if deps.Records == nil {
 		return errors.New("agent start needs a record store")
+	}
+	if err := checkDir(ctx, client, request); err != nil {
+		return err
 	}
 	local, err := localHandoff(string(request.Box), ref)
 	if err != nil {
@@ -150,7 +148,7 @@ func startSession(ctx context.Context, deps cli.Deps, client access.Session, req
 		return err
 	}
 	launch := launchCommand(request, ref)
-	entry, err := deps.Records.Begin(KindSession, string(request.Box), sessionArgs(request, ref, launch))
+	entry, err := deps.Records.Begin(record.KindAgent, string(request.Box), sessionArgs(request, ref, launch))
 	if err != nil {
 		return err
 	}
@@ -180,32 +178,58 @@ func startSession(ctx context.Context, deps cli.Deps, client access.Session, req
 	return nil
 }
 
+// checkDir verifies the working directory is on the box before anything is
+// created.
+//
+// A tree that never arrived is the one failure a session cannot detect from the
+// inside: the harness would start in the remote home and work on nothing. The
+// check runs before the record and before the packet, because a refused start
+// must leave nothing behind, and a missing tree is the common cause, so the
+// refusal names the exact push command instead of describing the problem.
+func checkDir(ctx context.Context, client access.Session, request request) error {
+	_, err := client.Run(ctx, testDirCommand(request.RemoteDir))
+	if err == nil {
+		return nil
+	}
+	if request.Tree != "" {
+		return fmt.Errorf("session refused: %s is not on %s, so the session would start outside the tree\n  push it with: devbox push %s --tree %s\n  test -d: %v", request.Dir, request.Box, request.Box, request.Tree, err)
+	}
+	return fmt.Errorf("session refused: %s does not exist on %s; create it or pass --dir\n  test -d: %v", request.Dir, request.Box, err)
+}
+
 // list merges the durable notes with what tmux reports for one box.
-func list(ctx context.Context, deps cli.Deps, args []string) error {
+func list(ctx context.Context, deps cli.Deps, args []string, open opener) error {
 	set := deps.FlagSet("agent list")
-	if err := set.Parse(args); err != nil {
+	rest, err := cli.Parse(set, args)
+	if err != nil {
 		return fmt.Errorf("%w\n\n%s", err, usage)
 	}
-	rest, err := positional(set, 1)
-	if err != nil {
-		return err
+	if len(rest) != 1 {
+		return errors.New(usage)
 	}
 	name, err := box.ParseName(rest[0])
 	if err != nil {
 		return err
 	}
+	if deps.DryRun {
+		deps.Printf("dry run: %s", listCommand())
+		return listSessions(ctx, deps, name, nil)
+	}
+	client, err := open(ctx, name)
+	if err != nil {
+		return err
+	}
+	return listSessions(ctx, deps, name, client)
+}
+
+// listSessions merges the two sources. A nil client means tmux was not consulted.
+func listSessions(ctx context.Context, deps cli.Deps, name box.Name, client access.Session) error {
 	records, err := sessionRecords(deps.Records, name)
 	if err != nil {
 		return err
 	}
 	var live []tmuxSession
-	if deps.DryRun {
-		deps.Printf("dry run: %s", listCommand())
-	} else {
-		client, err := dialer(deps).Open(name)
-		if err != nil {
-			return err
-		}
+	if client != nil {
 		live = liveSessions(ctx, deps, client, name)
 	}
 	return render(deps.Out, name, records, live)
@@ -213,14 +237,14 @@ func list(ctx context.Context, deps cli.Deps, args []string) error {
 
 // logs reads the session's pane, which is where a harness writes when nobody is
 // watching it.
-func logs(ctx context.Context, deps cli.Deps, args []string) error {
+func logs(ctx context.Context, deps cli.Deps, args []string, open opener) error {
 	set := deps.FlagSet("agent logs")
-	if err := set.Parse(args); err != nil {
+	rest, err := cli.Parse(set, args)
+	if err != nil {
 		return fmt.Errorf("%w\n\n%s", err, usage)
 	}
-	rest, err := positional(set, 2)
-	if err != nil {
-		return err
+	if len(rest) != 2 {
+		return errors.New(usage)
 	}
 	name, err := box.ParseName(rest[0])
 	if err != nil {
@@ -235,7 +259,7 @@ func logs(ctx context.Context, deps cli.Deps, args []string) error {
 		deps.Printf("dry run: %s", command)
 		return nil
 	}
-	client, err := dialer(deps).Open(name)
+	client, err := open(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -253,15 +277,15 @@ func logs(ctx context.Context, deps cli.Deps, args []string) error {
 }
 
 // attach hands the operator's terminal to the session. The session keeps running
-// whether or not a client is attached, so detaching is safe.
-func attach(ctx context.Context, deps cli.Deps, args []string, run external) error {
+// whether or not a client is attached, so detaching is always safe.
+func attach(ctx context.Context, deps cli.Deps, args []string, open opener, run external) error {
 	set := deps.FlagSet("agent attach")
-	if err := set.Parse(args); err != nil {
+	rest, err := cli.Parse(set, args)
+	if err != nil {
 		return fmt.Errorf("%w\n\n%s", err, usage)
 	}
-	rest, err := positional(set, 2)
-	if err != nil {
-		return err
+	if len(rest) != 2 {
+		return errors.New(usage)
 	}
 	name, err := box.ParseName(rest[0])
 	if err != nil {
@@ -276,20 +300,25 @@ func attach(ctx context.Context, deps cli.Deps, args []string, run external) err
 		deps.Printf("dry run: %s", strings.Join(argv, " "))
 		return nil
 	}
+	// The alias is what ssh reads, so the session is reachable only through the
+	// configuration the access slice wrote for this box.
+	if _, err := open(ctx, name); err != nil {
+		return err
+	}
 	return run(ctx, argv, deps.Stdin, deps.Out, deps.Err)
 }
 
 // stop ends a session. It is destructive, so it says what it will kill and waits
 // for an explicit yes before the box hears anything.
-func stop(ctx context.Context, deps cli.Deps, args []string) error {
+func stop(ctx context.Context, deps cli.Deps, args []string, open opener) error {
 	set := deps.FlagSet("agent stop")
 	yes := set.Bool("yes", false, "kill the session without asking")
-	if err := set.Parse(args); err != nil {
+	rest, err := cli.Parse(set, args)
+	if err != nil {
 		return fmt.Errorf("%w\n\n%s", err, usage)
 	}
-	rest, err := positional(set, 2)
-	if err != nil {
-		return err
+	if len(rest) != 2 {
+		return errors.New(usage)
 	}
 	name, err := box.ParseName(rest[0])
 	if err != nil {
@@ -315,7 +344,7 @@ func stop(ctx context.Context, deps cli.Deps, args []string) error {
 			return err
 		}
 	}
-	client, err := dialer(deps).Open(name)
+	client, err := open(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -345,80 +374,6 @@ func stopSession(ctx context.Context, deps cli.Deps, client access.Session, sess
 	return nil
 }
 
-// reconcile clears a session whose outcome devbox never established, using what
-// tmux reports as the evidence. It is the only way past a refusal, so it always
-// shows the evidence and what it is about to record.
-func reconcile(ctx context.Context, deps cli.Deps, args []string) error {
-	set := deps.FlagSet("agent reconcile")
-	detail := set.String("detail", "", "note to store with the resolution")
-	yes := set.Bool("yes", false, "resolve without asking")
-	if err := set.Parse(args); err != nil {
-		return fmt.Errorf("%w\n\n%s", err, usage)
-	}
-	rest, err := positional(set, 2)
-	if err != nil {
-		return err
-	}
-	name, err := box.ParseName(rest[0])
-	if err != nil {
-		return err
-	}
-	ref, err := ParseSessionRef(rest[1])
-	if err != nil {
-		return err
-	}
-	session, err := findSession(deps.Records, name, ref)
-	if err != nil {
-		return err
-	}
-	if !session.unresolved() {
-		deps.Printf("session %s on %s is already %s; nothing to reconcile", sessionName(ref), name, session.Entry.State)
-		return nil
-	}
-	if deps.DryRun {
-		deps.Printf("dry run: %s", listCommand())
-		deps.Printf("dry run: resolve record %s from what tmux reports", session.Entry.ID)
-		return nil
-	}
-	client, err := dialer(deps).Open(name)
-	if err != nil {
-		return err
-	}
-	output, err := client.Run(ctx, listCommand())
-	if err != nil {
-		return fmt.Errorf("reconcile session %s on %s: tmux ls: %w", sessionName(ref), name, err)
-	}
-	live := liveRef(parseSessions(output), ref)
-	note := strings.TrimSpace(*detail)
-	if live {
-		deps.Printf("tmux reports %s running on %s", sessionName(ref), name)
-	} else {
-		deps.Printf("tmux reports no session %s on %s", sessionName(ref), name)
-	}
-	entry := session.Entry
-	entry.Result = ""
-	action := "failed"
-	resolution := "operator reconciliation: tmux reports no " + sessionName(ref)
-	if live {
-		entry.Result = sessionName(ref)
-		action = "known"
-		resolution = "operator reconciliation: tmux reports " + sessionName(ref) + " running"
-	}
-	if note != "" {
-		resolution += "; " + note
-	}
-	deps.Printf("resolving record %s as %s", entry.ID, action)
-	if !*yes {
-		if err := confirm(deps, fmt.Sprintf("resolve session %s as %s? type yes", ref, action)); err != nil {
-			return err
-		}
-	}
-	if live {
-		return deps.Records.Resolved(entry, resolution)
-	}
-	return deps.Records.Failed(entry, resolution)
-}
-
 // recordUnknown marks a start whose outcome devbox could not establish. The
 // session may exist, so the note blocks the next start for the same provider until
 // an operator reconciles it.
@@ -446,8 +401,8 @@ func treeSuffix(tree string) string {
 	return ", tree " + tree
 }
 
-// confirm requires an explicit yes before devbox changes something the operator
-// cannot undo from this terminal.
+// confirm requires an explicit yes before devbox changes something this terminal
+// cannot undo.
 func confirm(deps cli.Deps, question string) error {
 	if deps.Stdin == nil {
 		return fmt.Errorf("%s: no terminal to ask on; pass --yes", question)

@@ -164,8 +164,14 @@ func remoteDirExpr(dir string) (string, error) {
 	return `"` + value + `"`, nil
 }
 
-// mkdirCommand creates the session directory. It runs first because the upload
-// needs its destination to exist.
+// testDirCommand reports whether the working directory exists on the box. It is
+// the check that runs before a session is created: a session that starts in a
+// directory that is not there works in the wrong place, and the operator can
+// still be told how to get the tree there.
+func testDirCommand(dir string) string { return "test -d " + dir }
+
+// mkdirCommand creates the session directory. It runs before the upload because
+// the upload needs its destination to exist.
 func mkdirCommand(ref string) string {
 	return "mkdir -p " + pathExpr(remoteSessionDir(ref))
 }
@@ -290,6 +296,11 @@ func constraints(dir string) []string {
 }
 
 // dialer builds the session factory for one box from the command's dependencies.
+//
+// The cloud executor goes with it so opening a session describes the instance and
+// refreshes the managed SSH entry first: a box that came back on a different
+// address is reached by the command that needs it, without the operator having to
+// run anything in between.
 func dialer(deps cli.Deps) access.Dialer {
-	return access.Dialer{Config: deps.Config, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}
+	return access.Dialer{Config: deps.Config, Cloud: deps.Cloud, Out: deps.Out, Err: deps.Err, Stdin: deps.Stdin}
 }

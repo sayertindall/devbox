@@ -11,12 +11,6 @@ import (
 	"devbox/internal/record"
 )
 
-// KindSession labels the durable note for an agent session in the record store,
-// so an unresolved session can be told apart from the cloud mutations that share
-// the store. The kind lives here because the record store is the shared contract
-// and only this slice starts sessions.
-const KindSession = "agent"
-
 // sessionRecord is one durable session note, decoded from the store.
 type sessionRecord struct {
 	Entry    record.Record
@@ -88,7 +82,7 @@ func sessionRecords(store *record.Store, boxName box.Name) ([]sessionRecord, err
 	}
 	var out []sessionRecord
 	for _, entry := range entries {
-		if entry.Kind != KindSession || entry.Box != string(boxName) {
+		if entry.Kind != record.KindAgent || entry.Box != string(boxName) {
 			continue
 		}
 		session, ok := parseSessionRecord(entry)
@@ -136,8 +130,10 @@ func blockingSessions(store *record.Store, boxName box.Name, provider Provider) 
 	return out, nil
 }
 
-// refusal builds the error that stops a start, naming every blocking session and
-// the exact command that clears it.
+// refusal builds the error that stops a start. It names every blocking session,
+// the record that holds it, and the one command that clears records, because an
+// operator who cannot see how to get unblocked will start the session by hand and
+// leave devbox behind.
 func refusal(store *record.Store, request request) error {
 	blocking, err := blockingSessions(store, request.Box, request.Provider)
 	if err != nil {
@@ -149,9 +145,9 @@ func refusal(store *record.Store, request request) error {
 	now := time.Now().UTC()
 	lines := []string{fmt.Sprintf("refusing to start a %s session on %s: %d unresolved session(s) already recorded", request.Provider, request.Box, len(blocking))}
 	for _, session := range blocking {
-		lines = append(lines, fmt.Sprintf("  %s (%s, %s, %s old): %s",
+		lines = append(lines, fmt.Sprintf("  session %s (%s, %s, %s old) is %s",
 			session.Ref, display(string(session.Provider)), display(session.Tree), age(session.Entry.CreatedAt, now), unsettled(session.Entry)))
-		lines = append(lines, fmt.Sprintf("  clear it with: devbox agent reconcile %s %s", request.Box, session.Ref))
+		lines = append(lines, fmt.Sprintf("  clear it with: devbox reconcile %s --note \"what you checked\"", session.Entry.ID))
 	}
 	return errors.New(strings.Join(lines, "\n"))
 }

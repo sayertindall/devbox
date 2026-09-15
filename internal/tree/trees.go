@@ -17,14 +17,14 @@ import (
 func trees(ctx context.Context, deps cli.Deps, args []string) error {
 	const usage = "devbox trees <name>"
 	set := deps.FlagSet("trees")
-	if err := set.Parse(args); err != nil {
+	positional, err := cli.Parse(set, args)
+	if err != nil {
 		return err
 	}
-	rest := set.Args()
-	if len(rest) != 1 {
+	if len(positional) != 1 {
 		return fmt.Errorf("usage: %s", usage)
 	}
-	name, err := box.ParseName(rest[0])
+	name, err := box.ParseName(positional[0])
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func trees(ctx context.Context, deps cli.Deps, args []string) error {
 		deps.Printf("dry run: would read %s on %s", remoteTreesRoot(), name)
 		return nil
 	}
-	session, err := openBox(deps, name)
+	session, err := openBox(ctx, deps, name)
 	if err != nil {
 		return err
 	}

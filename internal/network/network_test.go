@@ -203,11 +203,13 @@ func TestShowReportsEveryPiece(t *testing.T) {
 	if err := p.run(t, "show"); err != nil {
 		t.Fatalf("network show: %v", err)
 	}
-	wantFirewall := []string{"compute", "firewall-rules", "describe", "devbox-ssh", "--project=devbox-probe"}
+	// A describe whose output is decoded has to ask for JSON; the flag is part of
+	// the contract the fake records.
+	wantFirewall := []string{"compute", "firewall-rules", "describe", "devbox-ssh", "--project=devbox-probe", "--format=json"}
 	if got := p.cloud.Calls()[0]; !reflect.DeepEqual(got, wantFirewall) {
 		t.Fatalf("firewall describe argv\n got %#v\nwant %#v", got, wantFirewall)
 	}
-	wantNat := []string{"compute", "routers", "nats", "describe", "devbox-nat", "--project=devbox-probe", "--region=us-central1", "--router=devbox-router"}
+	wantNat := []string{"compute", "routers", "nats", "describe", "devbox-nat", "--project=devbox-probe", "--region=us-central1", "--router=devbox-router", "--format=json"}
 	found := false
 	for _, recorded := range p.cloud.Calls() {
 		if reflect.DeepEqual(recorded, wantNat) {

@@ -119,6 +119,13 @@ func subnetDescribeArgs(cfg config.Config) []string {
 	return []string{"compute", "networks", "subnets", "describe", vpcNetwork, cfg.ProjectFlag(), "--region=" + region(cfg)}
 }
 
+// withJSON asks gcloud for the JSON a read decodes. A describe that forgets the
+// flag answers with a human table, which fails at the decode far from the
+// mistake, so the request for JSON sits next to the decode that needs it.
+func withJSON(argv []string) []string {
+	return append(append([]string{}, argv...), "--format=json")
+}
+
 // exists reports whether a describe found its resource. A missing resource is a
 // fact rather than an error, which is what makes ensure idempotent.
 func exists(ctx context.Context, deps cli.Deps, argv []string) (bool, error) {
@@ -173,7 +180,7 @@ func ensure(ctx context.Context, deps cli.Deps) error {
 func show(ctx context.Context, deps cli.Deps) error {
 	cfg := deps.Config
 
-	out, err := deps.Cloud.Run(ctx, firewallDescribeArgs(cfg)...)
+	out, err := deps.Cloud.Run(ctx, withJSON(firewallDescribeArgs(cfg))...)
 	if err != nil {
 		if !gcloud.Missing(err) {
 			return err
@@ -192,7 +199,7 @@ func show(ctx context.Context, deps cli.Deps) error {
 			fallback(rule.Name, firewallID), state, allow(rule), list(rule.SourceRanges), list(rule.TargetTags))
 	}
 
-	out, err = deps.Cloud.Run(ctx, routerArgs("describe", cfg)...)
+	out, err = deps.Cloud.Run(ctx, withJSON(routerArgs("describe", cfg))...)
 	if err != nil {
 		if !gcloud.Missing(err) {
 			return err
@@ -202,7 +209,7 @@ func show(ctx context.Context, deps cli.Deps) error {
 		deps.Printf("router %s present in %s", routerID, region(cfg))
 	}
 
-	out, err = deps.Cloud.Run(ctx, natDescribeArgs(cfg)...)
+	out, err = deps.Cloud.Run(ctx, withJSON(natDescribeArgs(cfg))...)
 	if err != nil {
 		if !gcloud.Missing(err) {
 			return err
@@ -217,7 +224,7 @@ func show(ctx context.Context, deps cli.Deps) error {
 			fallback(nat.Name, natID), routerID, fallback(nat.NatIPAllocateOption, "unknown allocation"), fallback(nat.SubnetworkIPRangesToN, "unknown ranges"))
 	}
 
-	out, err = deps.Cloud.Run(ctx, subnetDescribeArgs(cfg)...)
+	out, err = deps.Cloud.Run(ctx, withJSON(subnetDescribeArgs(cfg))...)
 	if err != nil {
 		if !gcloud.Missing(err) {
 			return err

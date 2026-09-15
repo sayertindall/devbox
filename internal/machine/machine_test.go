@@ -120,10 +120,11 @@ func withSession(t *testing.T, session access.Session) {
 	t.Cleanup(func() { openSession = previous })
 }
 
-// instanceJSON is one instance as gcloud describes it, with the labels devbox
+// instanceJSON is one instance as a describe reports it: a single object, not the
+// array a list would return.
 // writes, an internal address, and a boot disk plus a data disk.
 func instanceJSON(name, status string) string {
-	return fmt.Sprintf(`[{"name":%q,"zone":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a","machineType":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a/machineTypes/n2-standard-16","status":%q,"creationTimestamp":"2026-09-15T12:00:00.000-07:00","labels":{"devbox-managed":"true","devbox-name":%q},"networkInterfaces":[{"networkIP":"10.128.0.2"}],"disks":[{"deviceName":"persistent-disk-0","source":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a/disks/%s","boot":true},{"deviceName":"devbox-data","source":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a/disks/devbox-data","boot":false}]}]`,
+	return fmt.Sprintf(`{"name":%q,"zone":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a","machineType":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a/machineTypes/n2-standard-16","status":%q,"creationTimestamp":"2026-09-15T12:00:00.000-07:00","labels":{"devbox-managed":"true","devbox-name":%q},"networkInterfaces":[{"networkIP":"10.128.0.2"}],"disks":[{"deviceName":"persistent-disk-0","source":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a/disks/%s","boot":true},{"deviceName":"devbox-data","source":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a/disks/devbox-data","boot":false}]}`,
 		name, status, name, name)
 }
 

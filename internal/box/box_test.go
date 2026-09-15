@@ -73,7 +73,7 @@ func TestLabelFlagIsStable(t *testing.T) {
 }
 
 func TestFactsReadTheInstanceDescription(t *testing.T) {
-	raw := `[{
+	raw := `{
 		"name": "dev",
 		"zone": "https://www.googleapis.com/compute/v1/projects/p/zones/us-central1-a",
 		"machineType": "https://www.googleapis.com/compute/v1/projects/p/zones/us-central1-a/machineTypes/n2-standard-16",
@@ -84,7 +84,7 @@ func TestFactsReadTheInstanceDescription(t *testing.T) {
 			{"deviceName": "persistent-disk-0", "boot": true},
 			{"deviceName": "devbox-data", "boot": false}
 		]
-	}]`
+	}`
 	facts, err := Fact(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -109,11 +109,40 @@ func TestFactsReadTheInstanceDescription(t *testing.T) {
 	}
 }
 
+// TestDecodeAcceptsBothShapes covers the two answers gcloud gives: a describe
+// returns one object and a list returns an array of them, and a caller that
+// decodes a slice must handle either without knowing which verb ran.
+func TestDecodeAcceptsBothShapes(t *testing.T) {
+	described := `{"name":"dev","status":"RUNNING","labels":{"devbox-managed":"true","devbox-name":"dev"}}`
+	listed := `[` + described + `,{"name":"other","status":"STOPPED"}]`
+
+	one, err := Fact(described)
+	if err != nil {
+		t.Fatalf("a described instance must decode: %v", err)
+	}
+	if one.Name != "dev" || !one.Running() {
+		t.Fatalf("facts did not decode: %+v", one)
+	}
+	all, err := Decode(listed)
+	if err != nil {
+		t.Fatalf("a listed project must decode: %v", err)
+	}
+	if len(all) != 2 || all[1].Name != "other" {
+		t.Fatalf("list did not decode: %+v", all)
+	}
+}
+
 func TestFactRejectsAnEmptyDescription(t *testing.T) {
 	if _, err := Fact("[]"); err == nil {
 		t.Fatal("an empty describe result means the instance is gone and must be an error")
 	}
-	if _, err := Fact("not json"); err == nil {
-		t.Fatal("a malformed description must be an error")
+	// The output of a describe that forgot --format=json. The failure has to name
+	// that, because the alternative is a decode error far from the call.
+	_, err := Fact("name: dev\nstatus: RUNNING")
+	if err == nil {
+		t.Fatal("non-JSON output must be an error")
+	}
+	if !strings.Contains(err.Error(), "--format=json") {
+		t.Fatalf("the error does not name the likely cause: %v", err)
 	}
 }

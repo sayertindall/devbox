@@ -6,6 +6,7 @@
 package box
 
 import (
+	"devbox/internal/gcloud"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -111,21 +112,22 @@ type attachedDisk struct {
 	Boot       bool   `json:"boot"`
 }
 
-// Decode parses the JSON gcloud returns for a describe or list call.
+// Decode parses the JSON gcloud returns for a describe or a list call. A
+// describe is one object and a list is an array of them, so both shapes arrive
+// here and leave as a slice.
 func Decode(data string) ([]Facts, error) {
-	trimmed := strings.TrimSpace(data)
-	if trimmed == "" {
-		return nil, nil
+	normalized, err := gcloud.Resources(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode instance description: %w", err)
 	}
 	var facts []Facts
-	if err := json.Unmarshal([]byte(trimmed), &facts); err != nil {
+	if err := json.Unmarshal(normalized, &facts); err != nil {
 		return nil, fmt.Errorf("decode instance description: %w", err)
 	}
 	return facts, nil
 }
 
-// Fact is the last entry of a single-instance describe, which gcloud reports as
-// a one-element array.
+// Fact is the instance from a describe, which gcloud reports as one object.
 func Fact(data string) (Facts, error) {
 	all, err := Decode(data)
 	if err != nil {

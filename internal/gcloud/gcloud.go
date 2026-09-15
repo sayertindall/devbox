@@ -89,3 +89,58 @@ func Missing(err error) bool {
 // ErrDryRun is returned by callers that need to stop a workflow that would have
 // written state, so a dry run never records a mutation as done.
 var ErrDryRun = errors.New("dry run")
+
+// Resources normalizes gcloud output for one resource or a list of them. gcloud
+// reports a describe as a single JSON object and a list as an array of the same
+// objects, so both shapes arrive here and leave as an array. The two are
+// interchangeable for a caller that decodes a slice, which is why nothing above
+// this line has to care which verb produced the output.
+func Resources(data string) ([]byte, error) {
+	trimmed := strings.TrimSpace(data)
+	switch {
+	case trimmed == "":
+		return []byte("[]"), nil
+	case trimmed[0] == '[':
+		return []byte(trimmed), nil
+	case trimmed[0] == '{':
+		wrapped := make([]byte, 0, len(trimmed)+2)
+		wrapped = append(wrapped, '[')
+		wrapped = append(wrapped, trimmed...)
+		return append(wrapped, ']'), nil
+	default:
+		return nil, unformatted(trimmed)
+	}
+}
+
+// Object decodes the output of a describe into value. A list where one object
+// belongs, or text where JSON belongs, is an error here rather than a zero value
+// that is indistinguishable from an empty resource.
+func Object(data string, value any) error {
+	trimmed := strings.TrimSpace(data)
+	if strings.HasPrefix(trimmed, "[") {
+		return fmt.Errorf("gcloud returned a list where one object was expected")
+	}
+	if !strings.HasPrefix(trimmed, "{") {
+		return unformatted(trimmed)
+	}
+	if err := json.Unmarshal([]byte(trimmed), value); err != nil {
+		return fmt.Errorf("decode gcloud output: %w", err)
+	}
+	return nil
+}
+
+// unformatted reports output that is not the JSON the call asked for, quoting
+// its first line so the message names what arrived and the likely mistake.
+func unformatted(trimmed string) error {
+	if trimmed == "" {
+		return fmt.Errorf("gcloud returned no output where JSON was expected; the call is probably missing --format=json")
+	}
+	line := trimmed
+	if index := strings.IndexByte(line, '\n'); index >= 0 {
+		line = line[:index]
+	}
+	if len(line) > 60 {
+		line = line[:60] + "..."
+	}
+	return fmt.Errorf("gcloud returned %q where JSON was expected; the call is probably missing --format=json", line)
+}

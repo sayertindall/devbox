@@ -10,10 +10,10 @@ import (
 
 // labeledDiskJSON is a data disk devbox claimed for box1, which is the only kind
 // destroy may delete.
-const labeledDiskJSON = `[{"name":"devbox-data","labels":{"devbox-managed":"true","devbox-name":"box1"}}]`
+const labeledDiskJSON = `{"name":"devbox-data","labels":{"devbox-managed":"true","devbox-name":"box1"}}`
 
 // unlabeledDiskJSON is a disk of the same name that carries no devbox labels.
-const unlabeledDiskJSON = `[{"name":"devbox-data","labels":{"team":"proto"}}]`
+const unlabeledDiskJSON = `{"name":"devbox-data","labels":{"team":"proto"}}`
 
 // imagesJSON is a machine image of box1 and one devbox must not touch. A machine
 // image stores the source instance's properties, so those labels are the only

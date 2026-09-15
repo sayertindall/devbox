@@ -141,3 +141,47 @@ func TestFakeRecordsWhatWouldHaveRun(t *testing.T) {
 		t.Fatalf("Last returned the wrong call: %+v", fake.Last())
 	}
 }
+
+func TestResourcesNormalizesBothShapes(t *testing.T) {
+	object := `{"name":"dev"}`
+	wrapped, err := Resources(object)
+	if err != nil {
+		t.Fatalf("a described resource must normalize: %v", err)
+	}
+	if string(wrapped) != `[`+object+`]` {
+		t.Fatalf("Resources(%q) = %s, want a one-element array", object, wrapped)
+	}
+	list := `[{"name":"dev"},{"name":"other"}]`
+	unchanged, err := Resources(list)
+	if err != nil {
+		t.Fatalf("a list must normalize: %v", err)
+	}
+	if string(unchanged) != list {
+		t.Fatalf("Resources(%q) = %s, want it unchanged", list, unchanged)
+	}
+	empty, err := Resources("  ")
+	if err != nil {
+		t.Fatalf("empty output is an empty list: %v", err)
+	}
+	if string(empty) != "[]" {
+		t.Fatalf("Resources of empty output = %s", empty)
+	}
+}
+
+func TestNotJSONNamesTheMissingFlag(t *testing.T) {
+	// gcloud's human table, which is what arrives when a decoded call forgot the
+	// format flag. The message has to name the flag, not the parser's complaint.
+	human := "allowSubnetCidrRoutesOverlap: false\ncreationTimestamp: 2026-09-15T16:20:18.166-07:00"
+	if _, err := Resources(human); err == nil || !strings.Contains(err.Error(), "--format=json") {
+		t.Fatalf("Resources of human output = %v, want an error naming --format=json", err)
+	}
+	if err := Object(human, &struct{}{}); err == nil || !strings.Contains(err.Error(), "--format=json") {
+		t.Fatalf("Object of human output = %v, want an error naming --format=json", err)
+	}
+	if err := Object(`[{"name":"dev"}]`, &struct{}{}); err == nil {
+		t.Fatal("a list where one object belongs must be an error, not a silent zero value")
+	}
+	if _, err := Resources(""); err != nil {
+		t.Fatalf("empty output is not a failure: %v", err)
+	}
+}

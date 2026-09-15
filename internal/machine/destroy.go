@@ -81,9 +81,12 @@ func claimsDisk(ctx context.Context, deps cli.Deps, disk string, name box.Name) 
 		}
 		return false, err
 	}
-	// gcloud reports a single describe as a one-element list, like an instance.
+	normalized, err := gcloud.Resources(out)
+	if err != nil {
+		return false, fmt.Errorf("decode disk %s: %w", disk, err)
+	}
 	var facts []diskFacts
-	if err := json.Unmarshal([]byte(out), &facts); err != nil {
+	if err := json.Unmarshal(normalized, &facts); err != nil {
 		return false, fmt.Errorf("decode disk %s: %w", disk, err)
 	}
 	if len(facts) == 0 {

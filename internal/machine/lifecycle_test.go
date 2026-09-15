@@ -51,7 +51,7 @@ func TestListShowsOnlyBoxesDevboxCreated(t *testing.T) {
 	p := newProbe(t)
 	p.cloud.Reply = func(args []string) (string, error) {
 		if len(args) > 2 && args[1] == "instances" && args[2] == "list" {
-			mine := strings.TrimSuffix(strings.TrimPrefix(instanceJSON("box1", "RUNNING"), "["), "]")
+			mine := instanceJSON("box1", "RUNNING")
 			foreign := `{"name":"proto-vm","zone":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a","machineType":"https://www.googleapis.com/compute/v1/projects/devbox-probe/zones/us-central1-a/machineTypes/n2-standard-4","status":"TERMINATED","labels":{"team":"proto"},"networkInterfaces":[{"networkIP":"10.128.0.9"}]}`
 			return "[" + mine + "," + foreign + "]", nil
 		}

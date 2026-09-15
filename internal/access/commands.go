@@ -57,6 +57,7 @@ func opSSHConfig() cli.Command {
 		Name:    "ssh-config",
 		Summary: "Write the box's Host entry into the operator's SSH configuration",
 		Usage:   usage,
+		Help:    "Only the block between the devbox markers is rewritten; the rest of the file is yours. Every session refreshes it anyway, so this is for readers that do not go through devbox.",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("ssh-config"), args)
 			if err != nil {
@@ -141,6 +142,7 @@ func opSSH(o ops) cli.Command {
 		Name:    "ssh",
 		Summary: "Open a shell on a box, or run one command through it",
 		Usage:   usage,
+		Help:    "Everything after -- is the remote command, so its own flags reach the box: devbox ssh dev -- tail -n 50 /var/log/devbox-bootstrap.log",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("ssh"), args)
 			if err != nil {
@@ -168,6 +170,7 @@ func opExec(o ops) cli.Command {
 		Name:    "exec",
 		Summary: "Run one command on a box and print its combined output",
 		Usage:   usage,
+		Help:    "Exits nonzero when the remote command does, which is what a script on this machine needs.",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("exec"), args)
 			if err != nil {
@@ -202,6 +205,7 @@ func opCopy(o ops) cli.Command {
 		Name:    "cp",
 		Summary: "Copy a file or directory between this machine and a box",
 		Usage:   usage,
+		Help:    "--down copies from the box to this machine. It uses rsync, and never --delete: a copy may not remove anything on the other side.",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			set := deps.FlagSet("cp")
 			down := set.Bool("down", false, "copy from the box to this machine")
@@ -253,6 +257,7 @@ func opForward() cli.Command {
 		Name:    "forward",
 		Summary: "Open an IAP tunnel from a local port to a box",
 		Usage:   usage,
+		Help:    "--port sets the local port, defaulting to port_forward in the configuration. The tunnel listens on localhost only.",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			set := deps.FlagSet("forward")
 			port := set.Int("port", 0, "the local port to forward; the configuration's port by default")
@@ -308,6 +313,7 @@ func opTerminfo(o ops) cli.Command {
 		Name:    "terminfo",
 		Summary: "Install the Ghostty xterm-ghostty entry on a box",
 		Usage:   usage,
+		Help:    "Run it once per box. It reads the local entry with infocmp and prints the SetEnv fallback for programs that cannot see it.",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("terminfo"), args)
 			if err != nil {
@@ -377,6 +383,7 @@ func opEditors() cli.Command {
 		Name:    "editors",
 		Summary: "Print the editor URLs that open a directory on a box",
 		Usage:   usage,
+		Help:    "Prints a zed ssh:// url and the VS Code Remote-SSH host. Both resolve through the SSH configuration devbox writes, so no editor setup is needed.",
 		Run: func(_ context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("editors"), args)
 			if err != nil {

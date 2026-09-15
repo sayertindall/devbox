@@ -318,6 +318,7 @@ func opDoctor(o ops) cli.Command {
 		Name:    "doctor",
 		Summary: "Check that a box is ready to run work",
 		Usage:   usage,
+		Help:    "One line per check with PASS or FAIL, and a nonzero exit when any check fails.",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("doctor"), args)
 			if err != nil {

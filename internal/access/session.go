@@ -320,12 +320,16 @@ func interactiveArgv(alias, command string) []string {
 	return []string{"ssh", alias, "--", command}
 }
 
-// uploadArgv copies one local path into a remote directory. --relative keeps the
-// path's own shape, so a tree uploaded file by file lands in the directory in the
-// same shape it had locally. --delete is never used: an upload may not remove
-// anything already on the box.
+// uploadArgv copies one local path into a remote directory. The local path is
+// passed exactly as the caller wrote it, because rsync reads a trailing separator
+// as "the contents of this directory" and its absence as "this directory": that is
+// the difference between landing a payload inside the destination and recreating
+// the local path beneath it. For the same reason there is no --relative, which
+// would rebuild the local path under the destination, absolute staging directories
+// and all. --delete is never used: an upload may not remove anything already on
+// the box.
 func uploadArgv(alias, local, remoteDir string) []string {
-	return []string{"rsync", "-a", "--relative", local, alias + ":" + directory(remoteDir)}
+	return []string{"rsync", "-a", "--", local, alias + ":" + directory(remoteDir)}
 }
 
 // downloadArgv copies one remote path into a local directory.

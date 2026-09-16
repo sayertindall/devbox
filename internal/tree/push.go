@@ -66,7 +66,10 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if _, err := session.Run(ctx, prepareRemote(treeName)); err != nil {
 		return fmt.Errorf("replace %s on %s: %w", remoteTreeDir(treeName), name, err)
 	}
-	if err := session.Upload(ctx, filepath.Join(work, stagedTree), remoteTreeDir(treeName)); err != nil {
+	// The trailing separator is load bearing: it sends what is inside the staged
+	// directory rather than recreating the staging path under the destination.
+	payload := filepath.Join(work, stagedTree) + string(os.PathSeparator)
+	if err := session.Upload(ctx, payload, remoteTreeDir(treeName)); err != nil {
 		return fmt.Errorf("upload the tree to %s:%s: %w", name, remoteTreeDir(treeName), err)
 	}
 	if err := session.Upload(ctx, filepath.Join(work, treeName+".json"), remoteManifestDir()); err != nil {

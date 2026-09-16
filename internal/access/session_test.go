@@ -169,7 +169,7 @@ func TestUploadAndDownloadArgv(t *testing.T) {
 		t.Fatalf("download: %v", err)
 	}
 	want := [][]string{
-		{"rsync", "-a", "--relative", "internal/access/session.go", "devbox-alpha:devbox/trees/main/"},
+		{"rsync", "-a", "--", "internal/access/session.go", "devbox-alpha:devbox/trees/main/"},
 		{"rsync", "-a", "devbox-alpha:devbox/agents/one/log", "/tmp/logs/"},
 	}
 	if len(recorder.calls) != len(want) {

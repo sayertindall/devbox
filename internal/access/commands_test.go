@@ -397,7 +397,7 @@ func TestCopyRehearsesWithoutOpeningASession(t *testing.T) {
 	if err := registry.Run(context.Background(), deps, []string{"cp", "dev", "/tmp/a", "/tmp/b"}); err != nil {
 		t.Fatalf("a rehearsal must print and stop: %v", err)
 	}
-	if !strings.Contains(out.String(), "would run: rsync -a --relative /tmp/a devbox-dev:/tmp/b/") {
+	if !strings.Contains(out.String(), "would run: rsync -a -- /tmp/a devbox-dev:/tmp/b/") {
 		t.Fatalf("the rehearsal must print the copy it would make:\n%s", out.String())
 	}
 }

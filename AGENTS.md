@@ -52,18 +52,39 @@ the pinned 2.100.0 is what runs.
   `/mnt/data/containerd`, the Dagger engine cache `/mnt/data/dagger`, and the pnpm
   store `/mnt/data/pnpm-store`, so every cache survives a stop.
 - Pushed trees live under the login user's home at `~/devbox/trees/<tree>`, on
-the boot disk, one directory per tree name.
-- The login user runs `docker` without sudo and has passwordless sudo.
+  the boot disk, one directory per tree name, owned by that user. That directory
+  is the one an editor opens, and the manifest each push sent sits beside the
+  trees in `~/devbox/trees/.manifests/<tree>.json` (`internal/tree/paths.go`).
+  The bootstrap creates none of it: the first push to a box does.
+- The login user runs `docker` without sudo, because the bootstrap puts it in
+  the `docker` group. `machine snapshot` and `image bake` stop and start the
+  storage services with `sudo systemctl` over SSH, so that user needs sudo
+  without a password prompt as well.
 
 **The account and the network**: the instance uses OS Login, so the SSH user is
 the operator's OS Login profile name (their `remote_user`). A box has no external
 address by default, which makes an IAP tunnel the way in and the NAT from
-`devbox network ensure` the way out.
+`devbox network ensure` the way out. That tunnel is
+`gcloud compute start-iap-tunnel`, which runs inside gcloud's own interpreter,
+and gcloud wants NumPy there: without it the tunnel still connects, but it prints
+a warning and carries less throughput. Install it into that interpreter, not into
+a virtualenv or the system Python:
+
+```sh
+"$(gcloud info --format='value(basic.python_location)')" -m pip install numpy
+```
 
 **What is not on a box**: browsers (their libraries are installed, the browser
 comes from whatever downloads it), any authentication state (`gh`, `gcloud`,
 `op`, the harness, container registries), your dotfiles (chezmoi is installed and
 nothing is applied), and your repositories.
+
+**The environment carries nothing but PATH.** The rendered script writes
+`/etc/environment` with one `PATH` line, and the mise shims directory is on it,
+so a non-interactive `ssh <alias> bash -c` command finds every pinned tool
+without reading a profile; the links in `/usr/local/bin` are the second guarantee
+for a session that never reads that file. Nothing else is exported to a session,
+so the only state a command inherits is the one it reads for itself.
 
 ## From nothing to a shell
 
@@ -108,6 +129,8 @@ Two traps in that sequence are worth their own lines.
 | Move a file either way | `devbox cp <name> <source> <target> [--down]` |
 | Local port to a box | `devbox forward <name> [--port <port>]` |
 | Is it ready to work | `devbox doctor <name>` |
+| Terminal entry for a Ghostty session | `devbox terminfo <name>` |
+| Open the box in an editor | `devbox editors <name> [path]` |
 | Send a working tree | `devbox push <name> [path] [--tree <tree>] [--everything]` |
 | Take changes back | `devbox pull <name> [path] [--tree <tree>] [--force]` |
 | List pushed trees | `devbox trees <name>` |
@@ -122,11 +145,26 @@ Two traps in that sequence are worth their own lines.
 `push` and `pull` move only what a manifest declares; excluded paths never leave
 the machine. `pull` refuses when the local tree changed since the push.
 
+A push replaces the destination tree wholesale. It stages the projection locally
+first, then removes `~/devbox/trees/<tree>` on the box and uploads into the fresh
+directory, so an upload that dies halfway is fixed by running the same command
+again, and a staging failure never touches the box at all. Nothing else on the
+box is removed: the upload is `rsync -a` without `--delete`.
+
+`devbox terminfo <name>` installs the local `xterm-ghostty` entry on the box with
+the box's own `tic`. Ghostty's `ssh-terminfo` shim installs the same entry once
+per destination and records it in its own cache under the resolved `user@host`,
+so it announces itself on the first unrecorded install and is quiet afterwards.
+It never runs for `devbox ssh`, which execs the ssh binary directly and so
+bypasses the shell wrapper; it covers an interactive `ssh <name>` from a Ghostty
+window. `devbox doctor` reports a missing entry as the
+`terminfo-xterm-ghostty` check.
+
 ## Running an agent on a box
 
 ```sh
 devbox agent start <box> --provider <provider> --task "<what it should do>" \
-  [--tree <name>] [--dir <absolute dir>]
+  [--tree <name>] [--dir <dir>]
 devbox agent list <box>
 devbox agent logs <box> <id>
 devbox agent attach <box> <id>
@@ -136,6 +174,16 @@ devbox agent stop <box> <id> [--yes]
 The session id is the second positional argument, not a flag. Sessions run in
 tmux on the box, so closing the laptop does not stop them. `agent start` writes a
 record before it acts, like every other mutation.
+
+`--provider` takes one of the three harnesses devbox starts, and nothing else:
+`omp`, `claude`, or `codex`, each run in its own non-interactive mode (`omp -p`,
+`claude -p`, `codex exec`). The table is `internal/agent/session.go`, and the
+usage line prints it rather than repeating it.
+
+`--tree` names a tree that is already on the box and starts the session inside
+it; a tree that never arrived is refused with the `push` that would fix it.
+`--dir` names the working directory instead, absolute or starting with `~`, and
+defaults to the tree, then to the remote home.
 
 ## Diagnosing a box that will not come up
 
@@ -171,6 +219,17 @@ Common failures, each seen on a real box:
   `ssh_key` names another, and the managed SSH entry pins exactly that.
 
 ## Working on this repository
+
+`README.md` is the operator's guide to the tool and `RUNBOOK.md` is how to run a
+box from a bare project to a working machine. This half is the contract a change
+must keep.
+
+This repository is public. Nothing in it names one operator's environment: not a
+login user, an email, a project, a bucket, a service account, or a host. Examples
+use the placeholders `<remote_user>`, `<project-id>`, `gs://<bucket>`, and a box
+named `dev`, whose derived SSH alias `devbox-dev` is the shape any box named
+`dev` gets. Real output is welcome; strip the names out of it first. A shipped
+example that leaked a login user is what this paragraph exists to prevent.
 
 ## Contracts a change must respect
 
@@ -217,13 +276,25 @@ Common failures, each seen on a real box:
   is what `push` does; `ModeVerbatim` carries the directory exactly as it is on
   disk, link chains included, which is what `push --everything` does. The
   exclusion list and `isBuildOutput` are the mechanical part.
-- **A push sends a working copy.** Dependencies and build caches stay behind
-  because the box can install them again, and they are most of the bytes:
-  `node_modules`, `dist`, `build`, `.venv`, `venv`, `__pycache__`, `.terraform`,
-  and the other toolchain caches. Everything else goes, including `.git` and any
-  file whose name starts with `.env`. `--everything` sends those caches too. The
-  choice is recorded in the handoff, so `pull` rebuilds the projection the push
-  produced rather than refusing it.
+- **A push sends a working copy.** `isBuildOutput` is the whole of what stays
+  behind, because the box can install it again and it is most of the bytes:
+  `node_modules`, `dist`, `build`, `.venv`, `venv`, `__pycache__`, `coverage`,
+  and the toolchain caches `.terraform`, `.pytest_cache`, `.mypy_cache`,
+  `.ruff_cache`, `.turbo`, `.next`, `.parcel-cache`, and `.gradle`. Everything
+  else travels, including `.git` and the `.env` files a narrow projection
+  refuses. `--everything` sends the build output too.
+- **The allowlist is decided per mode.** Every walk entry goes through
+  `admit`, and exclusion is by base name, at any depth, case-insensitively, so a
+  nested `node_modules` or a `sub/.env` is decided exactly like a top-level one.
+  `ModeProjection` (the zero value, what a baseline and an agent packet use)
+  skips every name in `mandatoryExcludes`: `.env`, the `.env.*` family, `.ssh`,
+  `.aws`, `.config`, `.claude`, `.codex`, `.omp`, `.agentbox`, `.git`, and the
+  build output below, and it refuses a `.git` deeper in the tree outright
+  because that is a nested repository it cannot carry. `ModeWorkingCopy` skips
+  only build output, so repository metadata, `.env` files, and `.ssh` all travel
+  with the tree. `ModeVerbatim` skips nothing and resolves no links. The
+  projection a push selected is recorded in the handoff, so `pull` rebuilds the
+  projection the push produced rather than refusing it.
 - **Refusals carry the next command.** If a command says no, it says what to run
   next (the record to reconcile, the `push` that is missing, the label to add).
   A refusal without a next action is a bug.
@@ -242,8 +313,9 @@ Common failures, each seen on a real box:
   Do not restate the code, and do not add a comment that will be false after the
   next change.
 - Tests assert what a caller observes: the exact argument vector, the state
-  transition, the refusal, the bytes written. They use `gcloud.Fake` and
-  `access.Recording`; no test makes a network or cloud call.
+  transition, the refusal, the bytes written. They use `gcloud.Fake`, a
+  recording executor, and `access.Recording`, a recording session: no test makes
+  a cloud call, and none needs a box.
 
 ## Commands
 
@@ -262,22 +334,36 @@ is green.
 ## Where state lives
 
 `~/.devbox/config.toml` (settings; `DEVBOX_HOME` moves the directory),
-`~/.devbox/records/` (one record per cloud mutation), `~/.devbox/trees.json` and
-`~/.devbox/agents/` (slice state), and one managed block in `~/.ssh/config`
-between `# >>> devbox managed block >>>` and `# <<< devbox managed block <<<`.
-Nothing outside those paths belongs to devbox, and the text outside the markers
-is the operator's.
+`~/.devbox/records/` (one record per cloud mutation), `~/.devbox/startup-script.sh`
+(the script the last `bootstrap upload` wrote), `~/.devbox/trees.json` (the last
+handoff of each tree on each box), `~/.devbox/agents/` (one directory per agent
+session), `~/.devbox/journal/` (the rollback journal a `pull` keeps until the
+apply verifies), and one managed block in `~/.ssh/config` between
+`# >>> devbox managed block >>>` and `# <<< devbox managed block <<<`. Nothing
+outside those paths belongs to devbox, and the text outside the markers is the
+operator's.
 
 ## What the test suite does not cover
 
-No test calls the cloud, and flag spellings come from the documented API surface
-unless a run proved them. Verified against a real project so far: `network
-ensure` and `show`, `machine new`, `list`, `show`, `start`, `stop`, `bootstrap
-upload` including the bucket grant, and the whole SSH path (managed entry, IAP
-tunnel, OS Login key, remote command). Not yet exercised against a real project:
-`snapshot`, `fork`, `schedule`, `image bake`, `agent start`, `push`, `pull`, and
-`destroy`. Treat the first run of each as its test, and fix the flag rather than
-the doc when they disagree.
+No test calls the cloud, and none needs a box: the cloud is a `gcloud.Fake` that
+records every argument vector, and a box is an `access.Recording` session that
+records every command and every file move. Flag spellings come from the
+documented API surface unless a run proved them.
+
+Verified against a real project: a box created and bootstrapped by itself,
+`devbox ssh` reaching it through the IAP tunnel, `devbox push` replacing the tree
+on it (`pushed tree v1 to dev: 12443 files, 61123965 bytes`), `devbox terminfo`
+installing the Ghostty entry, and Zed connecting to the box through the SSH entry
+devbox writes. Earlier runs also cover `network show`, `machine new`, `list`,
+`show`, `start`, and `stop`, `bootstrap upload` including the bucket grant, and
+the rest of the SSH path (managed entry, OS Login key, remote command).
+
+Not yet exercised against a real project: `network ensure` creating its firewall
+rule, router, and NAT, and the exact flag spellings of those NAT calls; instance
+schedules; `machine snapshot`; `machine fork` and the machine-image properties it
+sets; `image bake`; `pull` end to end; `agent start`; and `destroy`. Treat the
+first run of each as its test, and fix the flag rather than the doc when they
+disagree.
 
 ## Boundaries
 

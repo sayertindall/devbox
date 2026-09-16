@@ -279,6 +279,13 @@ fi
 # is not a working shell: both need one line in the login shell's rc file. The
 # block is written once, between markers, and every line is guarded, so a shell
 # that lacks either tool still starts.
+# A box is reached dozens of times a day, so the login is quiet: hushlogin is the
+# standard switch for both the message of the day and the last-login line.
+HUSHLOGIN="$LOGIN_HOME/.hushlogin"
+if [ ! -f "$HUSHLOGIN" ]; then
+	install -o "$LOGIN_USER" -g "$LOGIN_USER" -m 0644 /dev/null "$HUSHLOGIN"
+fi
+
 log 'phase shell: wiring the prompt and the shell history'
 SHELL_RC="$LOGIN_HOME/.bashrc"
 if [ ! -f "$SHELL_RC" ]; then

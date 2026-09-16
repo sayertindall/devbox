@@ -40,6 +40,8 @@ func TestRenderIncludesRequiredLines(t *testing.T) {
 		// keeps a stale one from outliving the install that failed.
 		{"failure trap", "trap 'status=$?;"},
 		{"failure mark cleared on success", "rm -f \"$FAILED\""},
+		// The login greeting is noise on a box an operator reaches constantly.
+		{"quiet login", "HUSHLOGIN=\"$LOGIN_HOME/.hushlogin\""},
 		{"data mount", "DATA_MOUNT='/mnt/data'"},
 		{"data disk device", "DATA_DEVICE='/dev/disk/by-id/google-devbox-data'"},
 		{"docker root", "DOCKER_ROOT='" + box.DockerRoot + "'"},

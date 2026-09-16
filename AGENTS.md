@@ -51,7 +51,8 @@ the pinned 2.100.0 is what runs.
   data root `/mnt/data/docker`, containerd's content store
   `/mnt/data/containerd`, the Dagger engine cache `/mnt/data/dagger`, and the pnpm
   store `/mnt/data/pnpm-store`, so every cache survives a stop.
-- Pushed trees live on the boot disk under `/var/lib/devbox/trees/<tree>`.
+- Pushed trees live under the login user's home at `~/devbox/trees/<tree>`, on
+the boot disk, one directory per tree name.
 - The login user runs `docker` without sudo and has passwordless sudo.
 
 **The account and the network**: the instance uses OS Login, so the SSH user is

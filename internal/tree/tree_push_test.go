@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,5 +130,31 @@ func TestPushRecordsTheHandoffTheNextPullCompares(t *testing.T) {
 	}
 	if file.Trees[0].Digest != second.SHA256 {
 		t.Fatalf("the record holds digest %s, want the latest %s", file.Trees[0].Digest, second.SHA256)
+	}
+}
+
+// TestPushRefusalNamesTheNextCommand covers the contract that a refusal carries
+// what to do about it: a tree that contains another repository can never be
+// projected as files, so the operator needs both of the ways forward spelled out.
+func TestPushRefusalNamesTheNextCommand(t *testing.T) {
+	root := treeFixture(t, "alpha", map[string]string{
+		"main.go":                "package main\n",
+		"vendor/dep/.git/config": "[core]\n",
+		"vendor/dep/main.go":     "package dep\n",
+	})
+	session := newStaging(t)
+	f := newFixture(t, session)
+
+	err := f.run("push", "dev", root, "--tree", "alpha")
+	if err == nil {
+		t.Fatal("a nested repository must be refused")
+	}
+	for _, want := range []string{"vendor/dep", "devbox push dev <subdirectory>", "--tree <name>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not carry %q", err, want)
+		}
+	}
+	if len(session.Uploads) != 0 {
+		t.Fatalf("a refused push uploaded %d paths", len(session.Uploads))
 	}
 }

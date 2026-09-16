@@ -86,6 +86,13 @@ var mandatoryExcludes = []string{
 	"build",
 }
 
+// ErrNestedRepository reports a repository inside the source tree. A projection
+// carries files, not a repository's history, and half-projecting one would leave a
+// tree on the box that no git command could trust, so the walk refuses instead of
+// quietly dropping it. It is a sentinel so the command that hit it can name what
+// the operator should do next.
+var ErrNestedRepository = errors.New("nested repository")
+
 // errIrregular and errReplaced are the two ways the stable-open protocol can
 // refuse a source path. They are sentinels rather than messages because the
 // build phase and the materialize phase phrase the same refusal differently.
@@ -218,7 +225,7 @@ func admit(dir, name string) (rel string, skip bool, err error) {
 		if dir == "." {
 			return "", true, nil
 		}
-		return "", false, fmt.Errorf("nested repository or submodule at %s is not allowed in source", dir)
+		return "", false, fmt.Errorf("%w or submodule at %s is not allowed in source", ErrNestedRepository, dir)
 	}
 	if isExcluded(name) {
 		return "", true, nil

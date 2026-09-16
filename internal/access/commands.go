@@ -415,7 +415,7 @@ func opEditors() cli.Command {
 		Name:    "editors",
 		Summary: "Print the editor URLs that open a directory on a box",
 		Usage:   usage,
-		Help:    "Prints a zed ssh:// url and the VS Code Remote-SSH host. Both resolve through the SSH configuration devbox writes, so no editor setup is needed.",
+		Help:    "Prints the command that opens a directory in Zed and the host VS Code uses. Both resolve through the SSH configuration devbox writes, so no editor setup is needed.",
 		Run: func(_ context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("editors"), args)
 			if err != nil {
@@ -439,8 +439,9 @@ func opEditors() cli.Command {
 				}
 			}
 			alias := deps.Config.SSHHost(name.String())
-			deps.Printf("zed ssh://%s%s", alias, path)
-			deps.Printf("VS Code Remote-SSH host: %s", alias)
+			deps.Printf("zed:        zed ssh://%s%s", alias, path)
+			deps.Printf("zed dialog: %s      (Remote Projects, Connect New Server: the host alone, never the url)", alias)
+			deps.Printf("vscode:     %s      (Remote-SSH host)", alias)
 			return nil
 		},
 	}

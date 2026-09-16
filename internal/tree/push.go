@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,6 +38,12 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	}
 	pushed, err := manifest.Build(root, manifest.Policy{})
 	if err != nil {
+		if errors.Is(err, manifest.ErrNestedRepository) {
+			return fmt.Errorf("build the manifest of %s: %w\n"+
+				"push a subdirectory that does not contain it, or push that repository as its own tree:\n"+
+				"  devbox push %s <subdirectory>\n"+
+				"  devbox push %s <path to the repository> --tree <name>", root, err, name, name)
+		}
 		return fmt.Errorf("build the manifest of %s: %w", root, err)
 	}
 	if deps.DryRun {

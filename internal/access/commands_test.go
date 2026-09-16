@@ -340,7 +340,9 @@ func TestEditorsPrintsTheZedURLAndTheRemoteSSHHost(t *testing.T) {
 	if err := commandFor(t, ops{}, "editors").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("editors: %v", err)
 	}
-	want := "zed ssh://devbox-alpha/home/builder\nVS Code Remote-SSH host: devbox-alpha\n"
+	want := "zed:        zed ssh://devbox-alpha/home/builder\n" +
+		"zed dialog: devbox-alpha      (Remote Projects, Connect New Server: the host alone, never the url)\n" +
+		"vscode:     devbox-alpha      (Remote-SSH host)\n"
 	if out.String() != want {
 		t.Errorf("output =\n%s\nwant\n%s", out.String(), want)
 	}

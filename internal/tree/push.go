@@ -56,7 +56,7 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	work, err := stageTree(root, treeName, pushed, policy)
+	work, staged, err := stageTree(root, treeName, pushed, policy)
 	if err != nil {
 		return err
 	}
@@ -77,14 +77,14 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	state.record(newState(name.String(), treeName, pushed.SHA256, root, policy.Mode, time.Now()))
+	state.record(newState(name.String(), treeName, staged.SHA256, root, policy.Mode, time.Now()))
 	if err := saveState(statePath, state); err != nil {
 		return err
 	}
 	if *everything {
 		deps.Printf("the directory was sent exactly as it is on disk, dependency and build directories included")
 	}
-	deps.Printf("pushed tree %s to %s: %d files, %d bytes", treeName, name, fileCount(pushed), pushed.Bytes)
+	deps.Printf("pushed tree %s to %s: %d files, %d bytes", treeName, name, fileCount(staged), staged.Bytes)
 	return nil
 }
 
@@ -92,10 +92,10 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 // directory and returns it. The directory holds the payload under stagedTree and
 // the manifest beside it, so one upload carries the tree and one carries the
 // declaration the box keeps for it.
-func stageTree(root, treeName string, pushed manifest.Manifest, policy manifest.Policy) (_ string, err error) {
+func stageTree(root, treeName string, pushed manifest.Manifest, policy manifest.Policy) (_ string, _ manifest.Manifest, err error) {
 	work, err := stagingDir("devbox-push-")
 	if err != nil {
-		return "", err
+		return "", manifest.Manifest{}, err
 	}
 	defer func() {
 		if err != nil {
@@ -105,18 +105,27 @@ func stageTree(root, treeName string, pushed manifest.Manifest, policy manifest.
 
 	payload := filepath.Join(work, stagedTree)
 	if err := os.Mkdir(payload, 0o755); err != nil {
-		return "", fmt.Errorf("create staging tree: %w", err)
+		return "", manifest.Manifest{}, fmt.Errorf("create staging tree: %w", err)
 	}
 	destination, err := os.OpenRoot(payload)
 	if err != nil {
-		return "", fmt.Errorf("open staging tree: %w", err)
+		return "", manifest.Manifest{}, fmt.Errorf("open staging tree: %w", err)
 	}
 	defer destination.Close()
 	if err := manifest.Materialize(root, pushed, policy, destination); err != nil {
-		return "", fmt.Errorf("stage the tree: %w", err)
+		return "", manifest.Manifest{}, fmt.Errorf("stage the tree: %w", err)
 	}
-	if err := manifest.Write(filepath.Join(work, treeName+".json"), pushed); err != nil {
-		return "", fmt.Errorf("write the pushed manifest: %w", err)
+	// The manifest that travels describes the bytes that are actually in the staging
+	// directory. A working copy may have been written to while it was copied, so the
+	// manifest built before the copy is a list rather than a description, and this is
+	// where it becomes one: what the box keeps, what the push records, and what the
+	// next pull compares the local tree against are all this manifest.
+	staged, err := manifest.Build(payload, policy)
+	if err != nil {
+		return "", manifest.Manifest{}, fmt.Errorf("describe the staged tree: %w", err)
 	}
-	return work, nil
+	if err := manifest.Write(filepath.Join(work, treeName+".json"), staged); err != nil {
+		return "", manifest.Manifest{}, fmt.Errorf("write the pushed manifest: %w", err)
+	}
+	return work, staged, nil
 }

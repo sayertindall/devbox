@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path"
@@ -831,20 +832,28 @@ func Materialize(sourceRoot string, m Manifest, policy Policy, destination *os.R
 	}
 	defer source.Close()
 
-	// Manifest authority: rewalk through the same source root the copies use, so
-	// no extra, missing, or mismatched path can enter the destination.
-	actual, err := buildFromRoot(source, policy)
-	if err != nil {
-		return err
-	}
-	// Both sides are already validated here, m just above and actual inside
-	// buildFromRoot, so the projection comparison needs no third validation.
-	if err := compareProjections(m, actual); err != nil {
-		return err
+	// A narrow projection is a contract: its manifest was built before anything
+	// moved, and a source that no longer matches it is refused. A working copy or a
+	// verbatim dump is a snapshot of a directory that may be in use by an editor, a
+	// test run, or an agent, so its manifest is the list to copy rather than a
+	// promise about the bytes, and the caller rebuilds it from what landed.
+	live := policy.Mode != ModeProjection
+	if !live {
+		// Manifest authority: rewalk through the same source root the copies use, so
+		// no extra, missing, or mismatched path can enter the destination.
+		actual, err := buildFromRoot(source, policy)
+		if err != nil {
+			return err
+		}
+		// Both sides are already validated here, m just above and actual inside
+		// buildFromRoot, so the projection comparison needs no third validation.
+		if err := compareProjections(m, actual); err != nil {
+			return err
+		}
 	}
 
 	for _, entry := range m.Entries {
-		if err := materializeEntry(source, destination, entry); err != nil {
+		if err := materializeEntry(source, destination, entry, live); err != nil {
 			return err
 		}
 	}
@@ -853,7 +862,7 @@ func Materialize(sourceRoot string, m Manifest, policy Policy, destination *os.R
 
 // materializeEntry lands one declared entry, creating the destination
 // directories its path implies first.
-func materializeEntry(source, destination *os.Root, entry Entry) error {
+func materializeEntry(source, destination *os.Root, entry Entry, live bool) error {
 	if dir := path.Dir(entry.Path); dir != "." {
 		if err := destination.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
@@ -861,6 +870,9 @@ func materializeEntry(source, destination *os.Root, entry Entry) error {
 	}
 	switch entry.Kind {
 	case KindFile:
+		if live {
+			return copyLiveFile(source, destination, entry)
+		}
 		return copyFile(source, destination, entry)
 	case KindSymlink:
 		return copySymlink(destination, entry)
@@ -868,10 +880,63 @@ func materializeEntry(source, destination *os.Root, entry Entry) error {
 	return fmt.Errorf("entry %q: unsupported kind %q", entry.Path, entry.Kind)
 }
 
+// copyLiveFile copies one file from a directory that may be in use. What lands is
+// one stable read of the file: a writer that changes it under the read is retried,
+// a file the tree no longer has is skipped, and a file being written without pause
+// keeps its last complete read. None of those is an error, because the caller
+// rebuilds the manifest from what landed, so the copy describes itself.
+func copyLiveFile(source, destination *os.Root, entry Entry) error {
+	const attempts = 4
+	for attempt := 0; ; attempt++ {
+		observed, err := source.Lstat(entry.Path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("materialize %s: %w", entry.Path, err)
+		}
+		if !observed.Mode().IsRegular() {
+			// The path is no longer a regular file. The rebuild declares what it is.
+			return nil
+		}
+		if _, _, err := copyFileBody(source, destination, entry); err != nil {
+			return err
+		}
+		after, err := source.Lstat(entry.Path)
+		if err == nil && after.Size() == observed.Size() && after.ModTime().Equal(observed.ModTime()) {
+			return nil
+		}
+		if attempt == attempts-1 {
+			return nil
+		}
+	}
+}
+
+// copyFile writes one declared file and refuses when what it copied is not what the
+// manifest declared. It is the narrow projection's contract, where the manifest was
+// built before anything moved and nothing is expected to move during the copy.
+//
+// copyFileBody is the copy itself, reporting what it wrote so a caller can either
+// compare it with the manifest or describe the copy as it is.
 func copyFile(source, destination *os.Root, entry Entry) error {
-	in, err := openStableSource(source, entry.Path)
+	size, digest, err := copyFileBody(source, destination, entry)
 	if err != nil {
 		return err
+	}
+	if size != entry.Size || digest != entry.SHA256 {
+		// The copy is written before it can be checked, so a refused copy is removed:
+		// a narrow projection must not leave bytes in the destination that its
+		// manifest does not describe.
+		destination.Remove(entry.Path)
+		return fmt.Errorf("materialize %s: source content changed after the manifest was built", entry.Path)
+	}
+	return nil
+}
+
+func copyFileBody(source, destination *os.Root, entry Entry) (int64, string, error) {
+	in, err := openStableSource(source, entry.Path)
+	if err != nil {
+		return 0, "", err
 	}
 	defer in.Close()
 
@@ -881,7 +946,7 @@ func copyFile(source, destination *os.Root, entry Entry) error {
 	}
 	temp, out, err := createTemp(destination, entry.Path, mode)
 	if err != nil {
-		return fmt.Errorf("materialize %s: %w", entry.Path, err)
+		return 0, "", fmt.Errorf("materialize %s: %w", entry.Path, err)
 	}
 	committed := false
 	defer func() {
@@ -892,16 +957,13 @@ func copyFile(source, destination *os.Root, entry Entry) error {
 
 	size, digest, err := copyAndHash(out, in)
 	if err != nil {
-		return fmt.Errorf("materialize %s: %w", entry.Path, err)
-	}
-	if size != entry.Size || digest != entry.SHA256 {
-		return fmt.Errorf("materialize %s: source content changed after the manifest was built", entry.Path)
+		return 0, "", fmt.Errorf("materialize %s: %w", entry.Path, err)
 	}
 	if err := commitTemp(destination, temp, entry.Path, mode); err != nil {
-		return err
+		return 0, "", err
 	}
 	committed = true
-	return nil
+	return size, digest, nil
 }
 
 // openStableSource opens a declared source file for copying through the same

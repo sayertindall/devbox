@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,8 +12,8 @@ import (
 
 // TestPushUploadsExactlyTheManifestDeclaredSet is the allowlist guarantee of a
 // push: what was staged, and therefore what could leave the machine, is the
-// manifest's own set, while a secret and a dependency tree in the same directory
-// are nowhere in it.
+// manifest's own set, which for a working copy is the directory an operator works
+// in while a dependency tree in the same directory is nowhere in it.
 func TestPushUploadsExactlyTheManifestDeclaredSet(t *testing.T) {
 	root := treeFixture(t, "alpha", map[string]string{
 		"main.go":                       "package main\n",
@@ -34,11 +33,14 @@ func TestPushUploadsExactlyTheManifestDeclaredSet(t *testing.T) {
 		t.Fatalf("push: %v", err)
 	}
 
-	pushed, err := manifest.Build(root, manifest.Policy{})
+	pushed, err := manifest.Build(root, manifest.Policy{Mode: manifest.ModeWorkingCopy})
 	if err != nil {
 		t.Fatalf("build the manifest the push should have sent: %v", err)
 	}
-	want := []string{"assets", "assets/logo.png", "link", "main.go", "sub", "sub/util.go"}
+	want := []string{
+		".env", ".git", ".git/config", "assets", "assets/logo.png", "link",
+		"main.go", "sub", "sub/.env", "sub/util.go",
+	}
 	if !slices.Equal(session.entries, want) {
 		t.Fatalf("the staged tree is %v, want exactly the declared set %v", session.entries, want)
 	}
@@ -75,7 +77,7 @@ func TestPushUploadsExactlyTheManifestDeclaredSet(t *testing.T) {
 	if !slices.Equal(session.Commands, wantCommands) {
 		t.Fatalf("the push ran %v on the box, want %v", session.Commands, wantCommands)
 	}
-	wantPrinted := fmt.Sprintf("replacing ~/devbox/trees/alpha on dev\npushed tree alpha to dev: 3 files, %d bytes\n", pushed.Bytes)
+	wantPrinted := fmt.Sprintf("replacing ~/devbox/trees/alpha on dev\npushed tree alpha to dev: 6 files, %d bytes\n", pushed.Bytes)
 	if got := f.out.String(); got != wantPrinted {
 		t.Fatalf("the push printed %q, want %q", got, wantPrinted)
 	}
@@ -133,45 +135,14 @@ func TestPushRecordsTheHandoffTheNextPullCompares(t *testing.T) {
 	}
 }
 
-// TestPushRefusalNamesTheNextCommand covers the contract that a refusal carries
-// what to do about it: a tree that contains another repository can never be
-// projected as files, so the operator needs both of the ways forward spelled out.
-func TestPushRefusalNamesTheNextCommand(t *testing.T) {
-	root := treeFixture(t, "alpha", map[string]string{
-		"main.go":                "package main\n",
-		"vendor/dep/.git/config": "[core]\n",
-		"vendor/dep/main.go":     "package dep\n",
-	})
-	session := newStaging(t)
-	f := newFixture(t, session)
-
-	err := f.run("push", "dev", root, "--tree", "alpha")
-	if err == nil {
-		t.Fatal("a nested repository must be refused")
-	}
-	for _, want := range []string{"vendor/dep", "--everything", "devbox push dev <subdirectory>"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("refusal %q does not carry %q", err, want)
-		}
-	}
-	if len(session.Uploads) != 0 {
-		t.Fatalf("a refused push uploaded %d paths", len(session.Uploads))
-	}
-}
-
-// TestPushEverythingSendsTheWholeDirectory covers the flag an operator uses to
-// dump a working directory onto a box they own: repository metadata and the paths
-// a projection normally keeps at home all travel, and the handoff records the
-// choice so the pull that follows rebuilds the same projection instead of
-// refusing the tree it pushed itself.
-func TestPushEverythingSendsTheWholeDirectory(t *testing.T) {
+// TestPushEverythingCarriesTheDependencyTrees covers the escape: a caller who
+// wants the bytes as they are on disk, dependency trees included.
+func TestPushEverythingCarriesTheDependencyTrees(t *testing.T) {
 	root := treeFixture(t, "alpha", map[string]string{
 		"main.go":             "package main\n",
-		".git/config":         "[core]\n",
-		".env":                "SECRET=yes\n",
 		"node_modules/x/i.js": "x\n",
-		"nested/lib.go":       "package nested\n",
-		"nested/.git/config":  "[core]\n",
+		"dist/bundle.js":      "void 0;\n",
+		".venv/bin/python":    "link\n",
 	})
 	session := newStaging(t)
 	f := newFixture(t, session)
@@ -179,20 +150,13 @@ func TestPushEverythingSendsTheWholeDirectory(t *testing.T) {
 	if err := f.run("push", "dev", root, "--tree", "alpha", "--everything"); err != nil {
 		t.Fatalf("push --everything: %v", err)
 	}
-	for _, want := range []string{".git", ".git/config", ".env", "node_modules/x/i.js", "nested/.git/config"} {
+	for _, want := range []string{"node_modules/x/i.js", "dist/bundle.js", ".venv/bin/python"} {
 		if !slices.Contains(session.entries, want) {
 			t.Fatalf("the staged tree %v does not include %s", session.entries, want)
 		}
 	}
-
 	record, ok := f.stateFile().find("dev", "alpha")
-	if !ok || !record.Everything {
+	if !ok || record.Projection != "verbatim" {
 		t.Fatalf("the handoff did not record the projection: %+v", record)
-	}
-	if _, err := localManifest(root, record.Everything, false); err != nil {
-		t.Fatalf("the recorded projection does not rebuild: %v", err)
-	}
-	if _, err := localManifest(root, false, false); err == nil {
-		t.Fatal("the default projection must still refuse this tree")
 	}
 }

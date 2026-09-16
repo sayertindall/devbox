@@ -28,10 +28,9 @@ type State struct {
 	Digest    string `json:"digest"`
 	Path      string `json:"path"`
 	UpdatedAt string `json:"updated_at"`
-	// Everything remembers that this handoff sent the directory as it is on disk,
-	// so a pull rebuilds the same projection instead of refusing the tree it
-	// pushed itself.
-	Everything bool `json:"everything,omitempty"`
+	// Projection remembers which projection this handoff sent, so a pull rebuilds
+	// the same one instead of refusing the tree the push produced.
+	Projection string `json:"projection,omitempty"`
 }
 
 // stateFile is the whole of trees.json: one record per box and tree, not one per
@@ -105,14 +104,40 @@ func saveState(path string, file stateFile) error {
 }
 
 // newState is the record of one handoff.
-func newState(name, tree, digest, path string, everything bool, now time.Time) State {
+func newState(name, tree, digest, path string, mode manifest.Mode, now time.Time) State {
 	return State{
 		Box:        name,
 		Tree:       tree,
 		Digest:     digest,
 		Path:       path,
 		UpdatedAt:  now.UTC().Format(time.RFC3339),
-		Everything: everything,
+		Projection: projectionName(mode),
+	}
+}
+
+// projectionName is how a mode is written down. A handoff recorded by an older
+// devbox has no name, which reads back as the narrowest projection, which is what
+// that devbox built.
+func projectionName(mode manifest.Mode) string {
+	switch mode {
+	case manifest.ModeWorkingCopy:
+		return "working-copy"
+	case manifest.ModeVerbatim:
+		return "verbatim"
+	default:
+		return "projection"
+	}
+}
+
+// projectionMode reads a recorded name back.
+func projectionMode(name string) manifest.Mode {
+	switch name {
+	case "working-copy":
+		return manifest.ModeWorkingCopy
+	case "verbatim":
+		return manifest.ModeVerbatim
+	default:
+		return manifest.ModeProjection
 	}
 }
 
@@ -159,7 +184,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 // pull decides whether the local root is usable. A root that is absent is
 // created when the operator has asked for the box tree to be applied over
 // nothing; a root that exists but is not a directory is always refused.
-func localManifest(root string, everything, force bool) (manifest.Manifest, error) {
+func localManifest(root string, mode manifest.Mode, force bool) (manifest.Manifest, error) {
 	info, err := os.Stat(root)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -174,7 +199,7 @@ func localManifest(root string, everything, force bool) (manifest.Manifest, erro
 	case !info.IsDir():
 		return manifest.Manifest{}, fmt.Errorf("local tree %s is not a directory", root)
 	}
-	built, err := manifest.Build(root, manifest.Policy{Everything: everything})
+	built, err := manifest.Build(root, manifest.Policy{Mode: mode})
 	if err != nil {
 		return manifest.Manifest{}, fmt.Errorf("build the manifest of %s: %w", root, err)
 	}

@@ -166,10 +166,10 @@ func TestPullAppliesAdditionsReplacementsAndDeletions(t *testing.T) {
 // have to come back from the journal.
 func TestPullRestoresTheLocalTreeWhenTheApplyFails(t *testing.T) {
 	local := treeFixture(t, "alpha", map[string]string{
-		"a.txt":     "one\n",
-		"b.txt":     "two\n",
-		"d":         "a file the box turned into a directory\n",
-		"keep/.env": "SECRET=local\n",
+		"a.txt":               "one\n",
+		"b.txt":               "two\n",
+		"d":                   "a file the box turned into a directory\n",
+		"keep/node_modules/x": "x\n",
 	})
 	box := treeFixture(t, "alpha", map[string]string{
 		"a.txt":       "one changed\n",
@@ -221,7 +221,6 @@ func TestPullLeavesExcludedLocalPathsAlone(t *testing.T) {
 	local := treeFixture(t, "alpha", map[string]string{
 		"a.txt":                     "one\n",
 		"b.txt":                     "two\n",
-		".env":                      "SECRET=local\n",
 		"node_modules/dep/index.js": "module.exports = 1;\n",
 	})
 	box := treeFixture(t, "alpha", map[string]string{"a.txt": "changed\n"})
@@ -238,7 +237,6 @@ func TestPullLeavesExcludedLocalPathsAlone(t *testing.T) {
 	got := snapshot(t, local)
 	want := map[string]string{
 		"a.txt":                     "changed\n",
-		".env":                      "SECRET=local\n",
 		"node_modules/dep/index.js": "module.exports = 1;\n",
 	}
 	if !maps.Equal(got, want) {

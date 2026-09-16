@@ -2,7 +2,6 @@ package tree
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,7 +20,7 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	set := deps.FlagSet("push")
 	treeFlag := set.String("tree", "", "tree name on the box (default: the base name of the local path)")
 	everything := set.Bool("everything", false,
-		"send the whole directory as it is on disk: repository metadata, dependency and build directories, virtualenvs, credential files, and symlinks with absolute targets")
+		"send the directory exactly as it is on disk, dependency and build directories included; the default leaves those behind")
 	positional, err := cli.Parse(set, args)
 	if err != nil {
 		return err
@@ -38,15 +37,12 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	policy := manifest.Policy{Everything: *everything}
+	policy := manifest.Policy{Mode: manifest.ModeWorkingCopy}
+	if *everything {
+		policy.Mode = manifest.ModeVerbatim
+	}
 	pushed, err := manifest.Build(root, policy)
 	if err != nil {
-		if errors.Is(err, manifest.ErrNestedRepository) {
-			return fmt.Errorf("build the manifest of %s: %w\n"+
-				"push the whole directory as it is, or push a subdirectory that does not contain it:\n"+
-				"  devbox push %s %s --everything\n"+
-				"  devbox push %s <subdirectory>", root, err, name, root, name)
-		}
 		return fmt.Errorf("build the manifest of %s: %w", root, err)
 	}
 	if deps.DryRun {
@@ -81,12 +77,12 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	state.record(newState(name.String(), treeName, pushed.SHA256, root, *everything, time.Now()))
+	state.record(newState(name.String(), treeName, pushed.SHA256, root, policy.Mode, time.Now()))
 	if err := saveState(statePath, state); err != nil {
 		return err
 	}
 	if *everything {
-		deps.Printf("the whole directory was sent as it is on disk: repository metadata, build output, and credential files included")
+		deps.Printf("the directory was sent exactly as it is on disk, dependency and build directories included")
 	}
 	deps.Printf("pushed tree %s to %s: %d files, %d bytes", treeName, name, fileCount(pushed), pushed.Bytes)
 	return nil

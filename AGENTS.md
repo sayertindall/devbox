@@ -209,19 +209,21 @@ Common failures, each seen on a real box:
   ```sh
   devbox bootstrap show | grep -c '<a line you added>'   # must not be 0
   ```
-- **Positive allowlist by default.** What leaves or arrives on this machine is
-  exactly what a manifest declares. The projection excludes `.env*`, `.ssh`,
-  `.aws`, `.config`, `.claude`, `.codex`, `.omp`, `.git`, `node_modules`,
-  `dist`, `build`, `.venv`, `venv`, and `__pycache__`, and it refuses a
-  repository found inside the tree, because a projection carries files and not
-  history. `internal/manifest`, `internal/baseline`.
-- **One projection choice is the caller's.** `push --everything` sends a directory
-  as it is on disk: every exclusion above is lifted, repository metadata and
-  credential files travel, and a symlink keeps an absolute target. It exists for
-  dumping a working directory onto a box the operator owns, it is the only path
-  that carries those, and the choice is recorded in the handoff so `pull` rebuilds
-  the same projection instead of refusing the tree the push produced.
-  `manifest.Policy` is where that decision lives, and no other caller sets it.
+- **Three projections, one policy type.** `manifest.Mode` says which one:
+  `ModeProjection` (the zero value) carries a project's own files and refuses a
+  repository found inside the tree, which is what a baseline and an agent packet
+  are; `ModeWorkingCopy` carries a working tree, so repository metadata and
+  credential files travel and only dependency and build output stays home, which
+  is what `push` does; `ModeVerbatim` carries the directory exactly as it is on
+  disk, link chains included, which is what `push --everything` does. The
+  exclusion list and `isBuildOutput` are the mechanical part.
+- **A push sends a working copy.** Dependencies and build caches stay behind
+  because the box can install them again, and they are most of the bytes:
+  `node_modules`, `dist`, `build`, `.venv`, `venv`, `__pycache__`, `.terraform`,
+  and the other toolchain caches. Everything else goes, including `.git` and any
+  file whose name starts with `.env`. `--everything` sends those caches too. The
+  choice is recorded in the handoff, so `pull` rebuilds the projection the push
+  produced rather than refusing it.
 - **Refusals carry the next command.** If a command says no, it says what to run
   next (the record to reconcile, the `push` that is missing, the label to add).
   A refusal without a next action is a bug.

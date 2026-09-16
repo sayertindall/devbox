@@ -67,17 +67,68 @@ const envPrefix = ".env."
 // Policy has no fields yet. Per-project excludes belong here when a project
 // needs more than the mandatory list; Materialize must then be given the same
 // policy so its undeclared-path rewalk uses identical rules.
+// Mode is what a caller is projecting. The zero value is the narrowest one, so a
+// caller that says nothing gets the projection with the least in it.
+type Mode int
+
+const (
+	// ModeProjection carries the files of a project and nothing else: repository
+	// metadata, credential files, dependency and build directories all stay behind,
+	// and a repository found inside the tree is refused. It is what a baseline or
+	// an agent packet is made of.
+	ModeProjection Mode = iota
+	// ModeWorkingCopy carries a working copy: repository metadata and nested
+	// repositories included, credential files included, and only dependency and
+	// build directories left behind, because the machine that receives it can
+	// install those again and they are the bulk of a directory. It is what `push`
+	// does, and `isBuildOutput` is the whole of what it leaves home.
+	ModeWorkingCopy
+	// ModeVerbatim carries a directory exactly as it is on disk. Every exclusion is
+	// lifted, symlinks keep their raw targets even when absolute, and link
+	// resolution is skipped because a verbatim copy makes no claim to be
+	// self-contained. It is for dumping a directory onto a machine you own.
+	ModeVerbatim
+)
+
+// Policy is the projection a caller asked for.
 type Policy struct {
-	// Everything projects a directory exactly as it is on disk. Every exclusion is
-	// lifted: repository metadata, dependency and build directories, virtualenvs,
-	// and credential files all travel, and a symlink keeps its raw target even
-	// when that target is absolute. It exists for dumping a working directory onto
-	// a machine the operator owns, it is the only policy that carries any of them,
-	// and a caller that sets it is saying so on purpose.
-	Everything bool
+	Mode Mode
 }
 
-// mandatoryExcludes never enter a source or baseline projection. Matching is by
+// allows reports whether a name that the projection list excludes is admitted
+// anyway under this mode.
+func (p Policy) allows(name string) bool {
+	switch p.Mode {
+	case ModeVerbatim:
+		return true
+	case ModeWorkingCopy:
+		return !isBuildOutput(name)
+	default:
+		return false
+	}
+}
+
+// buildOutput is what a working copy leaves behind. A dependency tree or a build
+// cache is not part of a working tree: it is the bulk of the bytes, the receiving
+// machine can install it again, and it is what the project's own ignore files
+// name. Everything else, including repository metadata and credential files,
+// travels, because a working copy is the directory the operator works in.
+func isBuildOutput(name string) bool {
+	lower := strings.ToLower(name)
+	switch lower {
+	case "node_modules", "dist", "build", ".venv", "venv", "__pycache__":
+		return true
+	// Caches a toolchain fills in the working tree: a provider download, a
+	// transpiler's output, a test runner's report. Each is reproducible on the
+	// machine that receives the tree, and together they are the bulk of the bytes.
+	case ".terraform", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".turbo",
+		".next", ".parcel-cache", ".gradle", "coverage":
+		return true
+	}
+	return false
+}
+
+// mandatoryExcludes never enter a narrow projection. Matching is by
 // base name at any depth, so a nested node_modules or sub/.env is excluded too.
 var mandatoryExcludes = []string{
 	".env",
@@ -98,6 +149,18 @@ var mandatoryExcludes = []string{
 	".venv",
 	"venv",
 	"__pycache__",
+	// The caches a toolchain fills in the working tree. They are excluded from
+	// every projection, and a working copy is what decides they are the only
+	// things a push leaves behind.
+	".terraform",
+	".pytest_cache",
+	".mypy_cache",
+	".ruff_cache",
+	".turbo",
+	".next",
+	".parcel-cache",
+	".gradle",
+	"coverage",
 }
 
 // ErrNestedRepository reports a repository inside the source tree. A projection
@@ -235,17 +298,18 @@ func readStableDir(source *os.Root, dir string, expect os.FileInfo) ([]os.DirEnt
 // silent skip. At the root the marker is this project's own repository storage
 // (directory, or a file for a worktree checkout) and is excluded.
 func admit(dir, name string, policy Policy) (rel string, skip bool, err error) {
-	if isGitMarker(name) && !policy.Everything {
-		// At the root the marker belongs to the tree being projected, so it is
-		// always skipped. Deeper down it marks another repository, which a
-		// projection cannot carry and which a whole-directory dump can, as
-		// ordinary directories like any other.
-		if dir == "." {
-			return "", true, nil
+	if isGitMarker(name) {
+		// A working copy and a verbatim dump both carry repository metadata. A
+		// narrow projection does not: at the root the marker is skipped, and deeper
+		// down it marks another repository, which such a projection cannot carry.
+		if policy.Mode == ModeProjection {
+			if dir == "." {
+				return "", true, nil
+			}
+			return "", false, fmt.Errorf("%w or submodule at %s is not allowed in source", ErrNestedRepository, dir)
 		}
-		return "", false, fmt.Errorf("%w or submodule at %s is not allowed in source", ErrNestedRepository, dir)
 	}
-	if isExcluded(name) && !policy.Everything {
+	if isExcluded(name) && !policy.allows(name) {
 		return "", true, nil
 	}
 	if err := validateName(name); err != nil {
@@ -523,6 +587,16 @@ func (g entryGraph) checkNamespace() error {
 // something declared inside the root. This is what makes an internal symlink
 // safe to preserve.
 func (g entryGraph) resolveLinks(entries []Entry) error {
+	// Resolution exists to prove that a projection is self-contained: every link
+	// lands on a declared entry inside it. A directory sent as it is on disk makes
+	// no such claim, and the links such a directory contains are exactly the ones
+	// that fail this test: an interpreter link that leaves the tree, a package
+	// manager's link to a package it never installed, and the link pairs it makes
+	// in its virtual store, which are cycles. All of them are copied as the links
+	// they are, so there is nothing to resolve.
+	if g.policy.Mode == ModeVerbatim {
+		return nil
+	}
 	for _, entry := range entries {
 		if entry.Kind != KindSymlink {
 			continue
@@ -557,7 +631,7 @@ func (g entryGraph) parseTarget(linkPath string) (string, []string, error) {
 	if target == "" {
 		return "", nil, errors.New("symlink target is empty")
 	}
-	if strings.HasPrefix(target, "/") && !g.policy.Everything {
+	if strings.HasPrefix(target, "/") {
 		return "", nil, errors.New("absolute symlink target is not allowed")
 	}
 	if !utf8.ValidString(target) {
@@ -567,10 +641,8 @@ func (g entryGraph) parseTarget(linkPath string) (string, []string, error) {
 		return "", nil, errors.New("invalid symlink target")
 	}
 	components := strings.Split(target, "/")
-	if !g.policy.Everything {
-		if err := checkExcludedComponents(target, components); err != nil {
-			return "", nil, err
-		}
+	if err := checkExcludedComponents(target, components); err != nil {
+		return "", nil, err
 	}
 	return target, components, nil
 }
@@ -602,12 +674,6 @@ func (g entryGraph) resolve(linkPath string, stack []string) (string, bool, erro
 	target, components, err := g.parseTarget(linkPath)
 	if err != nil {
 		return "", false, err
-	}
-	// An absolute target points outside the tree by definition. On the machine this
-	// directory is dumped to it resolves wherever it resolves, so there is nothing
-	// inside the projection to check and the link is carried as it is.
-	if g.policy.Everything && strings.HasPrefix(target, "/") {
-		return linkPath, false, nil
 	}
 	stack = append(stack, linkPath)
 
@@ -1047,7 +1113,7 @@ func validatePath(p string, policy Policy) error {
 		if err := validateName(component); err != nil {
 			return err
 		}
-		if isExcluded(component) && !policy.Everything {
+		if isExcluded(component) && !policy.allows(component) {
 			return fmt.Errorf("path component %q is excluded from source", component)
 		}
 	}

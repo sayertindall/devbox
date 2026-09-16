@@ -794,40 +794,69 @@ func TestBuildRejectsCaseVariantNestedGitFile(t *testing.T) {
 	})
 }
 
-// TestBuildEverythingSendsTheDirectoryAsItIs covers the one policy a caller can
-// choose: the default refuses a repository inside the tree, a credential file, a
-// dependency tree, and a symlink with an absolute target, and a whole-directory
-// dump carries all of them, because that is what dumping a working directory
-// means and the caller is the one who owns both machines.
-func TestBuildEverythingSendsTheDirectoryAsItIs(t *testing.T) {
+// TestBuildModes covers the three projections a caller can ask for. The narrow one
+// is a project's own files, the working copy is the directory an operator works in
+// with only dependency and build output left behind, and the verbatim one is what
+// is on disk including the link chains a verbatim copy cannot resolve.
+func TestBuildModes(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "app.go", "package app\n", 0o644)
 	write(t, root, ".git/config", "[core]\n", 0o644)
 	write(t, root, ".env", "SECRET=yes\n", 0o600)
 	write(t, root, "node_modules/pkg/index.js", "x\n", 0o644)
+	write(t, root, "dist/app.js", "void 0;\n", 0o644)
+	write(t, root, ".terraform/providers/registry.terraform.io/x/y/1.0/linux_amd64/z", "provider\n", 0o755)
 	write(t, root, "vendor/dep/.git/config", "[core]\n", 0o644)
 	write(t, root, "vendor/dep/main.go", "package dep\n", 0o644)
-	if err := os.Symlink("/usr/bin/python3", filepath.Join(root, "vendor", "dep", "python")); err != nil {
+	// The interpreter chain a virtual environment holds: a relative link to a link
+	// that leaves the tree. It lives in build output, which a working copy leaves
+	// behind and a verbatim copy carries, links and all.
+	if err := os.MkdirAll(filepath.Join(root, ".venv", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/usr/bin/python3", filepath.Join(root, ".venv", "bin", "python")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("python", filepath.Join(root, ".venv", "bin", "python3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("app.go", filepath.Join(root, "latest.go")); err != nil {
 		t.Fatal(err)
 	}
 
+	// A narrow projection refuses the repository inside the tree.
 	if _, err := Build(root, Policy{}); err == nil {
-		t.Fatal("the default policy must still refuse a nested repository and an absolute link")
+		t.Fatal("the narrow projection must refuse a nested repository")
 	}
-	m, err := Build(root, Policy{Everything: true})
+
+	// A working copy carries a working directory: metadata and credentials travel,
+	// dependency and build output stays, and the nested repository is included.
+	work, err := Build(root, Policy{Mode: ModeWorkingCopy})
 	if err != nil {
-		t.Fatalf("Build with everything: %v", err)
+		t.Fatalf("Build as a working copy: %v", err)
 	}
-	got := strings.Join(paths(m), ",")
-	for _, want := range []string{
-		".env",
-		".git/config",
-		"node_modules/pkg/index.js",
-		"vendor/dep/.git/config",
-		"vendor/dep/python",
-	} {
+	got := strings.Join(paths(work), ",")
+	for _, want := range []string{".env", ".git/config", "latest.go", "vendor/dep/.git/config", "vendor/dep/main.go"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("entries %v do not include %s", got, want)
+			t.Fatalf("the working copy %v does not include %s", got, want)
+		}
+	}
+	for _, unwanted := range []string{"node_modules", "dist", ".venv", ".terraform"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("the working copy %v includes %s", got, unwanted)
+		}
+	}
+
+	// A verbatim copy carries everything, including the link chains that a
+	// self-contained projection could not resolve.
+	all, err := Build(root, Policy{Mode: ModeVerbatim})
+	if err != nil {
+		t.Fatalf("Build verbatim: %v", err)
+	}
+	got = strings.Join(paths(all), ",")
+	for _, want := range []string{"node_modules/pkg/index.js", "dist/app.js", ".venv/bin/python", ".venv/bin/python3"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the verbatim copy %v does not include %s", got, want)
 		}
 	}
 }

@@ -22,6 +22,7 @@ func TestDefaultToolsPinsEveryTool(t *testing.T) {
 		"herdr",
 		"ripgrep",
 		"starship",
+		"zellij",
 		"cosign",
 		"cue",
 		"dagger",

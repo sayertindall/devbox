@@ -44,6 +44,9 @@ func DefaultTools() map[string]string {
 		"rust":          "1.98.0",
 		"talosctl":      "1.14.0",
 		"uv":            "0.8.9",
+		// zellij is a tool, not a system package: Debian 13 does not carry it, and
+		// this is the one place a version is pinned and installed for the operator.
+		"zellij": "0.45.1",
 	}
 }
 

@@ -140,10 +140,21 @@ func TestRenderInstallsTheOperatorPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	for _, name := range []string{"build-essential", "gh", "git", "jq", "rsync", "tmux", "zellij"} {
+	// The packages here are the ones Debian carries. A tool that is not in its
+	// repositories belongs in the toolchain below, where the version is pinned and
+	// where the same list serves a converged box and a freshly built one.
+	for _, name := range []string{"build-essential", "gh", "git", "jq", "rsync", "tmux"} {
 		if !strings.Contains(script, "\t"+name+" \\\n") && !strings.Contains(script, "\t"+name+"\n") {
 			t.Errorf("startup script does not install %s", name)
 		}
+	}
+	// zellij is the tool this test used to find in the apt list: Debian 13 does not
+	// carry it, and an unresolvable package stops the whole install.
+	if !strings.Contains(script, "mise use -g zellij@") {
+		t.Error("startup script does not install zellij from the toolchain")
+	}
+	if strings.Contains(script, "\tzellij \\\n") {
+		t.Error("zellij is back in the apt list, where no Debian release can resolve it")
 	}
 }
 

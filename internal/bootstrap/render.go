@@ -190,7 +190,6 @@ func systemPackages() []string {
 		"jq",
 		"rsync",
 		"tmux",
-		"zellij",
 	}
 }
 
@@ -256,6 +255,13 @@ log() {
 	printf '%s devbox-bootstrap: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG"
 }
 
+# A command's own output is the only record of why it failed, and the operator
+# reads this log rather than the instance's serial console. Every apt call is
+# written through it, and pipefail keeps a failed install failing.
+logged() {
+	"$@" 2>&1 | tee -a "$LOG"
+}
+
 # The guest agent runs a startup script as root, and everything below installs
 # system packages or writes under /etc.
 if [ "$(id -u)" -ne 0 ]; then
@@ -275,7 +281,7 @@ fi
 # otherwise report a failed install as one that is still running, which is the
 # difference between a box that becomes ready and one that never will.
 rm -f "$FAILED"
-trap 'status=$?; log "phase failed with status $status; the line above is the cause"; printf "%s\n" "$status" > "$FAILED"; exit "$status"' ERR
+trap 'status=$?; log "phase failed with status $status at: $BASH_COMMAND"; printf "%s\n" "$status" > "$FAILED"; exit "$status"' ERR
 
 # Every user-scoped step runs as the login user, so the mise data directory, the
 # shims, and the pnpm store belong to the account the operator will use.
@@ -300,8 +306,8 @@ expose_shims() {
 }
 
 log 'phase base: installing the archive prerequisites'
-apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl e2fsprogs gnupg kmod
+logged apt-get update
+logged apt-get install -y --no-install-recommends ca-certificates curl e2fsprogs gnupg kmod
 
 log "phase account: preparing the login user $LOGIN_USER"
 if ! id -u "$LOGIN_USER" >/dev/null 2>&1; then
@@ -367,8 +373,8 @@ Components: stable
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/docker.asc
 DOCKER_SOURCES
-apt-get update
-apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+logged apt-get update
+logged apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 # Images, containers, the containerd content store, and the Dagger cache live on
 # the data disk: the boot disk and any local SSD are gone after a stop or a
 # resume, and rebuilding them is the slowest part of a box.
@@ -388,11 +394,11 @@ systemctl restart docker
 usermod -aG docker "$LOGIN_USER"
 
 log 'phase libraries: installing the shared libraries a headless Chromium needs'
-apt-get install -y --no-install-recommends \
+logged apt-get install -y --no-install-recommends \
 	{{.LibraryBlock}}
 
 log 'phase packages: installing the operator tools'
-apt-get install -y --no-install-recommends \
+logged apt-get install -y --no-install-recommends \
 	{{.PackageBlock}}
 
 log 'phase cloud cli: installing the Google Cloud CLI from its apt repository'
@@ -407,8 +413,8 @@ Components: main
 Architectures: amd64
 Signed-By: /usr/share/keyrings/cloud.google.gpg
 GCLOUD_SOURCES
-apt-get update
-apt-get install -y --no-install-recommends google-cloud-cli
+logged apt-get update
+logged apt-get install -y --no-install-recommends google-cloud-cli
 
 log 'phase toolchain: installing mise'
 if [ ! -x /usr/local/bin/mise ]; then

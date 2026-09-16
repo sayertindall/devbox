@@ -108,7 +108,7 @@ Two traps in that sequence are worth their own lines.
 | Move a file either way | `devbox cp <name> <source> <target> [--down]` |
 | Local port to a box | `devbox forward <name> [--port <port>]` |
 | Is it ready to work | `devbox doctor <name>` |
-| Send a working tree | `devbox push <name> [path] [--tree <tree>] [--include-nested]` |
+| Send a working tree | `devbox push <name> [path] [--tree <tree>] [--everything]` |
 | Take changes back | `devbox pull <name> [path] [--tree <tree>] [--force]` |
 | List pushed trees | `devbox trees <name>` |
 | Pause and resume | `devbox machine stop <name>` / `devbox machine start <name>` |
@@ -209,16 +209,19 @@ Common failures, each seen on a real box:
   ```sh
   devbox bootstrap show | grep -c '<a line you added>'   # must not be 0
   ```
-- **Positive allowlist.** What leaves or arrives on this machine is exactly what
-  a manifest declares. Excluded paths (`.env*`, `.ssh`, `.aws`, `.config`,
-  `.claude`, `.codex`, `.omp`, `.git`, `node_modules`, `dist`, `build`, `.venv`,
-  `venv`, `__pycache__`) can never enter a projection, and no flag changes that. `internal/manifest`,
-  `internal/baseline`.
-- **One projection choice is the caller's.** A repository found inside the tree is
-  refused by default, because a projection carries files and not history.
-  `push --include-nested` flattens those repositories into ordinary files and
-  records the choice in the handoff so `pull` rebuilds the same projection.
-  `manifest.Policy` is where that decision lives.
+- **Positive allowlist by default.** What leaves or arrives on this machine is
+  exactly what a manifest declares. The projection excludes `.env*`, `.ssh`,
+  `.aws`, `.config`, `.claude`, `.codex`, `.omp`, `.git`, `node_modules`,
+  `dist`, `build`, `.venv`, `venv`, and `__pycache__`, and it refuses a
+  repository found inside the tree, because a projection carries files and not
+  history. `internal/manifest`, `internal/baseline`.
+- **One projection choice is the caller's.** `push --everything` sends a directory
+  as it is on disk: every exclusion above is lifted, repository metadata and
+  credential files travel, and a symlink keeps an absolute target. It exists for
+  dumping a working directory onto a box the operator owns, it is the only path
+  that carries those, and the choice is recorded in the handoff so `pull` rebuilds
+  the same projection instead of refusing the tree the push produced.
+  `manifest.Policy` is where that decision lives, and no other caller sets it.
 - **Refusals carry the next command.** If a command says no, it says what to run
   next (the record to reconcile, the `push` that is missing, the label to add).
   A refusal without a next action is a bug.

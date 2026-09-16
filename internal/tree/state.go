@@ -28,10 +28,10 @@ type State struct {
 	Digest    string `json:"digest"`
 	Path      string `json:"path"`
 	UpdatedAt string `json:"updated_at"`
-	// IncludeNested remembers that this handoff projected repositories inside the
-	// tree as files, so a pull rebuilds the same projection instead of refusing
-	// the tree it pushed itself.
-	IncludeNested bool `json:"include_nested,omitempty"`
+	// Everything remembers that this handoff sent the directory as it is on disk,
+	// so a pull rebuilds the same projection instead of refusing the tree it
+	// pushed itself.
+	Everything bool `json:"everything,omitempty"`
 }
 
 // stateFile is the whole of trees.json: one record per box and tree, not one per
@@ -105,14 +105,14 @@ func saveState(path string, file stateFile) error {
 }
 
 // newState is the record of one handoff.
-func newState(name, tree, digest, path string, includeNested bool, now time.Time) State {
+func newState(name, tree, digest, path string, everything bool, now time.Time) State {
 	return State{
-		Box:           name,
-		Tree:          tree,
-		Digest:        digest,
-		Path:          path,
-		UpdatedAt:     now.UTC().Format(time.RFC3339),
-		IncludeNested: includeNested,
+		Box:        name,
+		Tree:       tree,
+		Digest:     digest,
+		Path:       path,
+		UpdatedAt:  now.UTC().Format(time.RFC3339),
+		Everything: everything,
 	}
 }
 
@@ -159,7 +159,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 // pull decides whether the local root is usable. A root that is absent is
 // created when the operator has asked for the box tree to be applied over
 // nothing; a root that exists but is not a directory is always refused.
-func localManifest(root string, includeNested, force bool) (manifest.Manifest, error) {
+func localManifest(root string, everything, force bool) (manifest.Manifest, error) {
 	info, err := os.Stat(root)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -174,7 +174,7 @@ func localManifest(root string, includeNested, force bool) (manifest.Manifest, e
 	case !info.IsDir():
 		return manifest.Manifest{}, fmt.Errorf("local tree %s is not a directory", root)
 	}
-	built, err := manifest.Build(root, manifest.Policy{AllowNestedRepositories: includeNested})
+	built, err := manifest.Build(root, manifest.Policy{Everything: everything})
 	if err != nil {
 		return manifest.Manifest{}, fmt.Errorf("build the manifest of %s: %w", root, err)
 	}

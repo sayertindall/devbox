@@ -68,12 +68,13 @@ const envPrefix = ".env."
 // needs more than the mandatory list; Materialize must then be given the same
 // policy so its undeclared-path rewalk uses identical rules.
 type Policy struct {
-	// AllowNestedRepositories projects a repository found inside the source tree
-	// as ordinary files. Its metadata is still excluded, so what arrives is a file
-	// projection of the working tree with no history, which is what an operator
-	// dumping a whole directory for their own use is asking for and what a
-	// projection refuses by default.
-	AllowNestedRepositories bool
+	// Everything projects a directory exactly as it is on disk. Every exclusion is
+	// lifted: repository metadata, dependency and build directories, virtualenvs,
+	// and credential files all travel, and a symlink keeps its raw target even
+	// when that target is absolute. It exists for dumping a working directory onto
+	// a machine the operator owns, it is the only policy that carries any of them,
+	// and a caller that sets it is saying so on purpose.
+	Everything bool
 }
 
 // mandatoryExcludes never enter a source or baseline projection. Matching is by
@@ -160,7 +161,7 @@ func buildFromRoot(source *os.Root, policy Policy) (Manifest, error) {
 	slices.SortFunc(entries, func(a, b Entry) int { return strings.Compare(a.Path, b.Path) })
 
 	m := Manifest{Version: Version, Entries: entries, Bytes: total}
-	if err := m.Validate(); err != nil {
+	if err := m.ValidateWith(policy); err != nil {
 		return Manifest{}, err
 	}
 	digest, err := digestOf(m)
@@ -234,16 +235,17 @@ func readStableDir(source *os.Root, dir string, expect os.FileInfo) ([]os.DirEnt
 // silent skip. At the root the marker is this project's own repository storage
 // (directory, or a file for a worktree checkout) and is excluded.
 func admit(dir, name string, policy Policy) (rel string, skip bool, err error) {
-	if isGitMarker(name) {
+	if isGitMarker(name) && !policy.Everything {
 		// At the root the marker belongs to the tree being projected, so it is
 		// always skipped. Deeper down it marks another repository, which a
-		// projection cannot carry unless the caller said to flatten it.
-		if dir == "." || policy.AllowNestedRepositories {
+		// projection cannot carry and which a whole-directory dump can, as
+		// ordinary directories like any other.
+		if dir == "." {
 			return "", true, nil
 		}
 		return "", false, fmt.Errorf("%w or submodule at %s is not allowed in source", ErrNestedRepository, dir)
 	}
-	if isExcluded(name) {
+	if isExcluded(name) && !policy.Everything {
 		return "", true, nil
 	}
 	if err := validateName(name); err != nil {
@@ -336,11 +338,16 @@ func hashFile(source *os.Root, rel string, observed os.FileInfo) (int64, string,
 
 // Validate enforces every path, kind, and symlink-graph rule on a manifest,
 // whether it was built locally or received from elsewhere.
-func (m Manifest) Validate() error {
+func (m Manifest) Validate() error { return m.ValidateWith(Policy{}) }
+
+// ValidateWith validates under a projection policy. A manifest built by declaring
+// the whole directory legitimately names paths the default refuses, so the checks
+// that exist to keep a projection narrow have to be told which projection this is.
+func (m Manifest) ValidateWith(policy Policy) error {
 	if m.Version != Version {
 		return fmt.Errorf("unsupported manifest version %d", m.Version)
 	}
-	graph, err := m.index()
+	graph, err := m.index(policy)
 	if err != nil {
 		return err
 	}
@@ -362,8 +369,9 @@ func (m Manifest) Validate() error {
 
 // index validates every entry path, ordering, and kind-specific field, and
 // returns the entry graph the symlink rules resolve through.
-func (m Manifest) index() (entryGraph, error) {
+func (m Manifest) index(policy Policy) (entryGraph, error) {
 	graph := entryGraph{
+		policy: policy,
 		files:  map[string]bool{},
 		links:  map[string]string{},
 		dirs:   map[string]bool{},
@@ -371,7 +379,7 @@ func (m Manifest) index() (entryGraph, error) {
 	}
 	previous := ""
 	for _, entry := range m.Entries {
-		if err := validatePath(entry.Path); err != nil {
+		if err := validatePath(entry.Path, policy); err != nil {
 			return entryGraph{}, fmt.Errorf("entry %q: %w", entry.Path, err)
 		}
 		if err := checkOrder(previous, entry.Path); err != nil {
@@ -437,6 +445,7 @@ func checkSymlinkFields(entry Entry) error {
 // symlinks, the directories those entry paths imply, and the case-insensitive
 // path space every one of them claims.
 type entryGraph struct {
+	policy Policy
 	files  map[string]bool
 	links  map[string]string
 	dirs   map[string]bool
@@ -548,7 +557,7 @@ func (g entryGraph) parseTarget(linkPath string) (string, []string, error) {
 	if target == "" {
 		return "", nil, errors.New("symlink target is empty")
 	}
-	if strings.HasPrefix(target, "/") {
+	if strings.HasPrefix(target, "/") && !g.policy.Everything {
 		return "", nil, errors.New("absolute symlink target is not allowed")
 	}
 	if !utf8.ValidString(target) {
@@ -558,8 +567,10 @@ func (g entryGraph) parseTarget(linkPath string) (string, []string, error) {
 		return "", nil, errors.New("invalid symlink target")
 	}
 	components := strings.Split(target, "/")
-	if err := checkExcludedComponents(target, components); err != nil {
-		return "", nil, err
+	if !g.policy.Everything {
+		if err := checkExcludedComponents(target, components); err != nil {
+			return "", nil, err
+		}
 	}
 	return target, components, nil
 }
@@ -591,6 +602,12 @@ func (g entryGraph) resolve(linkPath string, stack []string) (string, bool, erro
 	target, components, err := g.parseTarget(linkPath)
 	if err != nil {
 		return "", false, err
+	}
+	// An absolute target points outside the tree by definition. On the machine this
+	// directory is dumped to it resolves wherever it resolves, so there is nothing
+	// inside the projection to check and the link is carried as it is.
+	if g.policy.Everything && strings.HasPrefix(target, "/") {
+		return linkPath, false, nil
 	}
 	stack = append(stack, linkPath)
 
@@ -739,7 +756,7 @@ func Materialize(sourceRoot string, m Manifest, policy Policy, destination *os.R
 	if destination == nil {
 		return errors.New("destination root is required")
 	}
-	if err := m.Validate(); err != nil {
+	if err := m.ValidateWith(policy); err != nil {
 		return err
 	}
 	source, err := os.OpenRoot(sourceRoot)
@@ -1022,7 +1039,7 @@ func validateName(name string) error {
 	return nil
 }
 
-func validatePath(p string) error {
+func validatePath(p string, policy Policy) error {
 	if p == "" || p != path.Clean(p) || strings.HasPrefix(p, "/") {
 		return errors.New("path is not a normalized relative path")
 	}
@@ -1030,7 +1047,7 @@ func validatePath(p string) error {
 		if err := validateName(component); err != nil {
 			return err
 		}
-		if isExcluded(component) {
+		if isExcluded(component) && !policy.Everything {
 			return fmt.Errorf("path component %q is excluded from source", component)
 		}
 	}

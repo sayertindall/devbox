@@ -50,8 +50,8 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 		return err
 	}
 	record, recorded := state.find(name.String(), treeName)
-	includeNested := recorded && record.IncludeNested
-	before, err := localManifest(root, includeNested, *force)
+	everything := recorded && record.Everything
+	before, err := localManifest(root, everything, *force)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 	if info, err := os.Stat(arrivedRoot); err != nil || !info.IsDir() {
 		return fmt.Errorf("the download of %s from %s brought no tree", remoteTreeDir(treeName), name)
 	}
-	arrived, err := manifest.Build(arrivedRoot, manifest.Policy{})
+	arrived, err := manifest.Build(arrivedRoot, manifest.Policy{Everything: everything})
 	if err != nil {
 		return fmt.Errorf("build the manifest of the tree received from %s: %w", name, err)
 	}
@@ -91,7 +91,7 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 	// arrival exactly as a manifest built locally would be: an entry that escapes
 	// the root, claims a namespace twice, or names an excluded path is refused
 	// here, before any of it reaches the local tree.
-	if err := arrived.Validate(); err != nil {
+	if err := arrived.ValidateWith(manifest.Policy{Everything: everything}); err != nil {
 		return fmt.Errorf("validate the tree received from %s: %w", name, err)
 	}
 
@@ -99,7 +99,7 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	rollback, err := newJournal(journalDir, root, before, arrived, includeNested)
+	rollback, err := newJournal(journalDir, root, before, arrived, everything)
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 
 	// The local tree is the tree that arrived, so the digest of record is now
 	// that tree's: the next pull compares the local tree against it.
-	state.record(newState(name.String(), treeName, arrived.SHA256, root, includeNested, time.Now()))
+	state.record(newState(name.String(), treeName, arrived.SHA256, root, everything, time.Now()))
 	if err := saveState(statePath, state); err != nil {
 		return err
 	}

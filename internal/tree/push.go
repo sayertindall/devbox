@@ -20,8 +20,8 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	const usage = "devbox push <name> [path] [--tree <tree>]"
 	set := deps.FlagSet("push")
 	treeFlag := set.String("tree", "", "tree name on the box (default: the base name of the local path)")
-	includeNested := set.Bool("include-nested", false,
-		"project repositories found inside the tree as ordinary files; their git metadata and the standard exclusions still do not leave this machine")
+	everything := set.Bool("everything", false,
+		"send the whole directory as it is on disk: repository metadata, dependency and build directories, virtualenvs, credential files, and symlinks with absolute targets")
 	positional, err := cli.Parse(set, args)
 	if err != nil {
 		return err
@@ -38,13 +38,13 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	policy := manifest.Policy{AllowNestedRepositories: *includeNested}
+	policy := manifest.Policy{Everything: *everything}
 	pushed, err := manifest.Build(root, policy)
 	if err != nil {
 		if errors.Is(err, manifest.ErrNestedRepository) {
 			return fmt.Errorf("build the manifest of %s: %w\n"+
-				"push the whole tree as files, or push a subdirectory that does not contain it:\n"+
-				"  devbox push %s %s --include-nested\n"+
+				"push the whole directory as it is, or push a subdirectory that does not contain it:\n"+
+				"  devbox push %s %s --everything\n"+
 				"  devbox push %s <subdirectory>", root, err, name, root, name)
 		}
 		return fmt.Errorf("build the manifest of %s: %w", root, err)
@@ -81,12 +81,12 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	state.record(newState(name.String(), treeName, pushed.SHA256, root, *includeNested, time.Now()))
+	state.record(newState(name.String(), treeName, pushed.SHA256, root, *everything, time.Now()))
 	if err := saveState(statePath, state); err != nil {
 		return err
 	}
-	if *includeNested {
-		deps.Printf("repositories inside the tree were projected as files; their git metadata was not sent")
+	if *everything {
+		deps.Printf("the whole directory was sent as it is on disk: repository metadata, build output, and credential files included")
 	}
 	deps.Printf("pushed tree %s to %s: %d files, %d bytes", treeName, name, fileCount(pushed), pushed.Bytes)
 	return nil

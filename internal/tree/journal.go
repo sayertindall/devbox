@@ -26,10 +26,10 @@ type journal struct {
 	dir    string
 	before manifest.Manifest
 	dirs   []string
-	// includeNested is the projection the local tree was read with, so a rollback
-	// rebuilds the same manifest instead of failing on a tree that contains a
-	// repository the push flattened.
-	includeNested bool
+	// everything is the projection the local tree was read with, so a rollback
+	// rebuilds the same manifest instead of failing on a directory the push sent
+	// whole.
+	everything bool
 }
 
 // journalIndex is what a journal keeps beside the saved bytes.
@@ -44,7 +44,7 @@ type journalIndex struct {
 // newJournal writes the rollback record of one apply before that apply starts. A
 // journal that is not on disk before the first byte is written is no journal at
 // all, so the index and every saved file are flushed here.
-func newJournal(dir, root string, before, arrived manifest.Manifest, includeNested bool) (*journal, error) {
+func newJournal(dir, root string, before, arrived manifest.Manifest, everything bool) (*journal, error) {
 	saved := filepath.Join(dir, journalFiles)
 	if err := os.MkdirAll(saved, 0o700); err != nil {
 		return nil, fmt.Errorf("create the rollback journal %s: %w", dir, err)
@@ -76,7 +76,7 @@ func newJournal(dir, root string, before, arrived manifest.Manifest, includeNest
 			return nil, fmt.Errorf("save %s for rollback: %w", entry.Path, err)
 		}
 	}
-	return &journal{dir: dir, before: before, dirs: dirs, includeNested: includeNested}, nil
+	return &journal{dir: dir, before: before, dirs: dirs, everything: everything}, nil
 }
 
 // discard removes the journal. Only a caller whose apply is verified whole may
@@ -100,7 +100,7 @@ func (j *journal) discard() error {
 // from the saved bytes and the recorded targets. The journal is removed only after
 // the tree has been read back and compared against the recorded manifest.
 func (j *journal) restore(root string, arrived manifest.Manifest) error {
-	current, err := manifest.Build(root, manifest.Policy{AllowNestedRepositories: j.includeNested})
+	current, err := manifest.Build(root, manifest.Policy{Everything: j.everything})
 	if err != nil {
 		return fmt.Errorf("read the local tree back: %w", err)
 	}
@@ -139,7 +139,7 @@ func (j *journal) restore(root string, arrived manifest.Manifest) error {
 		}
 	}
 
-	after, err := manifest.Build(root, manifest.Policy{AllowNestedRepositories: j.includeNested})
+	after, err := manifest.Build(root, manifest.Policy{Everything: j.everything})
 	if err != nil {
 		return fmt.Errorf("read the restored tree back: %w", err)
 	}

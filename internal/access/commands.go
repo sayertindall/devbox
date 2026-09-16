@@ -175,7 +175,7 @@ func opSSH(o ops) cli.Command {
 				return err
 			}
 			alias := deps.Config.SSHHost(name.String())
-			if state, err := session.Run(ctx, boxStateCommand()); err == nil && state != boxReady {
+			if state, err := session.Run(ctx, boxStateCommand()); err == nil && strings.TrimSpace(state) != boxReady {
 				notice(deps, "%s", bootNotice(deps.Config, name, state))
 			}
 			argv := interactiveArgv(alias, remote)
@@ -358,7 +358,7 @@ func opTerminfo(o ops) cli.Command {
 				return err
 			}
 			alias := deps.Config.SSHHost(name.String())
-			if state, err := session.Run(ctx, boxStateCommand()); err == nil && state != boxReady {
+			if state, err := session.Run(ctx, boxStateCommand()); err == nil && strings.TrimSpace(state) != boxReady {
 				notice(deps, "%s", bootNotice(deps.Config, name, state))
 			}
 			if dryRun(deps, sshArgv(alias, "tic -x -")...) {

@@ -452,7 +452,7 @@ func TestSSHDoesNotRunWhenTheBoxCannotBeReached(t *testing.T) {
 func TestSSHSaysWhenTheBoxIsStillBootstrapping(t *testing.T) {
 	recorder := &procRecorder{}
 	deps, out, errOut := testDeps(testConfig(), &gcloud.Fake{})
-	session := &Recording{Reply: func(string) (string, error) { return boxBooting, nil }}
+	session := &Recording{Reply: func(string) (string, error) { return boxBooting + "\n", nil }}
 	o := ops{open: openOn(session), proc: recorder.run}
 	if err := commandFor(t, o, "ssh").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("ssh: %v", err)
@@ -468,7 +468,7 @@ func TestSSHSaysWhenTheBoxIsStillBootstrapping(t *testing.T) {
 	}
 
 	errOut.Reset()
-	ready := &Recording{Reply: func(string) (string, error) { return boxReady, nil }}
+	ready := &Recording{Reply: func(string) (string, error) { return boxReady + "\n", nil }}
 	if err := commandFor(t, ops{open: openOn(ready), proc: recorder.run}, "ssh").
 		Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("ssh: %v", err)

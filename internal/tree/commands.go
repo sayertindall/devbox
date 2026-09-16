@@ -28,21 +28,29 @@ func Commands() []cli.Command {
 		{
 			Name:    "push",
 			Summary: "Copy a local working tree to a box under the manifest allowlist",
-			Usage:   "devbox push <name> [path] [--tree <tree>]",
-			Help:    "Only the files the manifest declares are copied; excluded paths never leave this machine.",
-			Run:     push,
+			Usage:   "devbox push <name> [path] [--tree <tree>] [--everything]",
+			Help: `Only the files the manifest declares are copied; excluded paths never leave this machine.
+The tree replaces the one the box already has: devbox stages the copy here
+first, removes ~/devbox/trees/<tree> there, and uploads into the fresh directory,
+so a partial upload is fixed by running the same command again.
+--everything sends the directory exactly as it is on disk, dependency and build
+directories included; the default leaves those behind and carries the rest of a
+working copy, repository metadata and .env files included.`,
+			Run: push,
 		},
 		{
 			Name:    "pull",
 			Summary: "Apply the tree on a box over the local tree under a rollback journal",
 			Usage:   "devbox pull <name> [path] [--tree <tree>] [--force]",
-			Help:    "Refuses when the local tree changed since the push. --force applies anyway; the rollback journal is kept until the apply verifies.",
-			Run:     pull,
+			Help: `Refuses when the local tree changed since the push. --force applies it anyway and prints what it writes over; the rollback journal is kept until the apply verifies.
+The projection is the one the handoff recorded, so a pull rebuilds the tree the push sent rather than refusing it.`,
+			Run: pull,
 		},
 		{
 			Name:    "trees",
 			Summary: "List the trees on a box with the digests recorded locally",
 			Usage:   "devbox trees <name>",
+			Help:    `One line per tree: its name, the digest devbox recorded for the last handoff, and the local path that handoff came from. A tree on the box this machine has no record of prints "not recorded".`,
 			Run:     trees,
 		},
 	}

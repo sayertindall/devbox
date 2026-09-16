@@ -217,6 +217,16 @@ func (d boxDialer) Open(ctx context.Context, name box.Name) (tools.Session, erro
 	return session, nil
 }
 
+// globalFlags is the program-level flag list. The flags themselves are defined
+// once in runWith; this is the wording the help prints, and it is written down
+// here because the help renderer has no access to the dispatcher's flag set.
+const globalFlags = `Global flags, accepted anywhere on the line:
+  --config <path>   read settings from another file, the config.toml in the devbox
+                    state directory by default
+  --project <id>    override the configured project
+  --zone <zone>     override the configured zone, and the region derived from it
+  --dry-run         print the cloud calls instead of running them`
+
 // builtinCommands are the commands the binary owns: the operator's own settings
 // and the help that names every other command. They work before a project is
 // configured, because they are how a project gets configured.
@@ -227,8 +237,10 @@ func builtinCommands(registry *cli.Registry) []cli.Command {
 			Summary:    "List the commands, or describe one",
 			Usage:      "devbox help [<command>]",
 			ConfigOnly: true,
-			Help: `With no argument it lists every command. With one it prints that
-command's usage line and its flags.`,
+			Help: `With no argument it lists every command. With one it prints that command's
+summary, its usage line, and whatever that command says about its own flags.
+
+` + globalFlags,
 			Run: func(_ context.Context, deps cli.Deps, args []string) error {
 				if len(args) == 0 {
 					deps.Printf("%s", registry.Help())
@@ -246,7 +258,13 @@ command's usage line and its flags.`,
 			Name:       "config",
 			ConfigOnly: true,
 			Summary:    "Show or create the devbox configuration",
-			Usage:      "devbox config [init]",
+			Usage:      "devbox config [init|show]",
+			Help: `init    writes the configuration file and names every setting still blank.
+        It needs a project: devbox config init --project <project-id>
+show    prints the settings a box would be created with, and the file they came
+        from. This is what runs when no verb is given.
+
+` + globalFlags,
 			Run: func(_ context.Context, deps cli.Deps, args []string) error {
 				action := "show"
 				if len(args) > 0 {
@@ -289,6 +307,7 @@ command's usage line and its flags.`,
 			Summary:    "Print the devbox version",
 			Usage:      "devbox version",
 			ConfigOnly: true,
+			Help:       "Prints the version of this binary. What a box installs is `devbox toolchain`.",
 			Run: func(_ context.Context, deps cli.Deps, args []string) error {
 				deps.Printf("devbox %s", version)
 				return nil

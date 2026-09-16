@@ -40,11 +40,15 @@ func CommandsWith(mise, npm Resolver, dialer Dialer) []cli.Command {
 		// Editing the pins needs only the configuration file; apply needs a box
 		// and checks the rest itself.
 		ConfigOnly: true,
-		Help: `add <tool>[@version]  resolves the newest version when none is given
-update [tool...]     refreshes every pin and the harness, and prints each change
-outdated             read only: what is behind
-apply <box>          converges a running box from the pins, in one ssh call
-edit                 opens the configuration file in $EDITOR`,
+		Help: `list                  the toolchain the configuration resolves to, one pin per line
+add <tool>[@version]  resolves the newest version when none is given
+remove <tool>         drops one pin
+update [tool...]      refreshes every pin and the harness, and prints each change
+outdated              read only: what is behind
+apply <box>           converges a running box from the pins, in one ssh call
+edit                  opens the configuration file in $EDITOR
+Declaring a pin materializes the built-in toolchain into the file first, so the
+file always lists every pin the box installs.`,
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			return run(ctx, deps, args, mise, npm, dialer)
 		},

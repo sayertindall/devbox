@@ -16,7 +16,7 @@ import (
 // directory and the manifest that describes it, and records the digest the next
 // pull compares the local tree against.
 func push(ctx context.Context, deps cli.Deps, args []string) error {
-	const usage = "devbox push <name> [path] [--tree <tree>]"
+	const usage = "devbox push <name> [path] [--tree <tree>] [--everything]"
 	set := deps.FlagSet("push")
 	treeFlag := set.String("tree", "", "tree name on the box (default: the base name of the local path)")
 	everything := set.Bool("everything", false,

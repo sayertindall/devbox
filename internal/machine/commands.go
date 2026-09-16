@@ -20,7 +20,8 @@ const machineHelp = `flags:
              --remove              detach and delete the policy
   destroy    --confirm=<name>      required; the box name again
              --with-images         also delete the machine images labeled for it
-  snapshot   stops docker and containerd first, then restarts them`
+  snapshot   the box must be running, because docker and containerd are stopped
+             and restarted around the capture of its data disk`
 
 // verbNames is every machine verb name in table order.
 func verbNames() []string {

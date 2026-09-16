@@ -338,7 +338,7 @@ func opTerminfo(o ops) cli.Command {
 		Name:    "terminfo",
 		Summary: "Install the Ghostty xterm-ghostty entry on a box",
 		Usage:   usage,
-		Help:    "Run it once per box. It reads the local entry with infocmp and prints the SetEnv fallback for programs that cannot see it.",
+		Help:    "Run it once per box. It reads the local xterm-ghostty entry with infocmp, feeds it to the box's own tic, and prints the SetEnv fallback for programs that still cannot see it. Ghostty's ssh-terminfo shim reinstalls the entry on every connection through this alias and caches nothing, which is harmless next to this.",
 		Run: func(ctx context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("terminfo"), args)
 			if err != nil {
@@ -415,7 +415,7 @@ func opEditors() cli.Command {
 		Name:    "editors",
 		Summary: "Print the editor URLs that open a directory on a box",
 		Usage:   usage,
-		Help:    "Prints the command that opens a directory in Zed and the host VS Code uses. Both resolve through the SSH configuration devbox writes, so no editor setup is needed.",
+		Help:    "Prints the zed ssh:// URL for a directory on the box, the host to paste into Zed's Connect New Server dialog, and the host VS Code's Remote-SSH takes. The path defaults to the login user's home, and a relative path is read from there. All three resolve through the SSH configuration devbox writes, so no editor setup is needed.",
 		Run: func(_ context.Context, deps cli.Deps, args []string) error {
 			positional, err := cli.Parse(deps.FlagSet("editors"), args)
 			if err != nil {

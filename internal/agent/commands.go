@@ -25,12 +25,15 @@ var usage = `usage:
   devbox agent attach <box> <id>
   devbox agent stop <box> <id> [--yes]`
 
-// agentHelp is the flag detail for the verbs that take any.
-const agentHelp = `flags:
-  start   --provider <name>   which harness to run, from the table above
+// agentHelp is the flag detail for the verbs that take any. The provider list is
+// rendered from the harness table, like the usage line, so the two cannot drift.
+var agentHelp = `flags:
+  start   --provider <name>   the harness to run: ` + providerList() + `
           --task <text>       what it should do; the packet on the box has the rest
-          --tree <name>       work in a pushed tree, default the box's own name
-          --dir <dir>         work in an absolute directory instead
+          --tree <name>       a tree already pushed to the box: the session starts in
+                              it, and one that never arrived is refused
+          --dir <dir>         the working directory instead, absolute or starting
+                              with ~; default: the tree, otherwise the remote home
   stop    --yes               skip the confirmation prompt
 The session runs in tmux, so closing the laptop does not stop it.`
 
@@ -38,7 +41,7 @@ The session runs in tmux, so closing the laptop does not stop it.`
 func Commands() []cli.Command {
 	return []cli.Command{{
 		Name:    "agent",
-		Summary: "Start, list, watch, attach to, and stop agent sessions on a box",
+		Summary: "Start, list, read, attach to, and stop agent sessions on a box",
 		Usage:   "devbox agent <start|list|logs|attach|stop> ...",
 		Help:    agentHelp,
 		Run:     dispatch,

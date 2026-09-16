@@ -66,7 +66,8 @@ upload  writes it to the state directory, and with --bucket publishes it and
 			Help: `The image captures the data disk, which is not bootable: use it to hand a
 prepared cache or data disk to another instance. To clone a whole box, which
 captures the boot disk and the instance configuration too, use devbox machine
-fork. Docker and containerd are stopped for the capture and restarted after.`,
+fork. Docker and containerd are stopped and restarted around the capture when the
+box is running; a stopped box is captured as it is.`,
 			Run: runImage,
 		},
 		{
@@ -74,7 +75,10 @@ fork. Docker and containerd are stopped for the capture and restarted after.`,
 			Summary:    "Print the toolchain a box installs",
 			Usage:      "devbox toolchain",
 			ConfigOnly: true,
-			Run:        runToolchain,
+			Help: `One pin per line, sorted by name, then the harness: exactly the set the startup
+script installs and devbox tools apply converges to. The pins are the built-in
+toolchain unless the configuration declares a [tools] table of its own.`,
+			Run: runToolchain,
 		},
 	}
 }

@@ -348,6 +348,39 @@ func TestHelpDescribesOneCommand(t *testing.T) {
 	}
 }
 
+// TestHelpNamesTheFlagsACommandTakes holds the help to the flags an operator can
+// actually pass: a flag that works but that `devbox help` never names is the one
+// way the help lies about the code. The list is hand-kept, so a new flag is only
+// covered once it is added here.
+func TestHelpNamesTheFlagsACommandTakes(t *testing.T) {
+	partialConfig(t)
+	for _, command := range []struct {
+		name  string
+		flags []string
+	}{
+		{"agent", []string{"--provider", "--task", "--tree", "--dir", "--yes"}},
+		{"bootstrap", []string{"--bucket"}},
+		{"config", []string{"--project"}},
+		{"cp", []string{"--down"}},
+		{"forward", []string{"--port"}},
+		{"machine", []string{"--no-bootstrap", "--schedule", "--start", "--stop", "--timezone", "--remove", "--confirm", "--with-images"}},
+		{"pull", []string{"--tree", "--force"}},
+		{"push", []string{"--tree", "--everything"}},
+		{"reconcile", []string{"--box", "--note"}},
+	} {
+		out := captureStdout(t, func() {
+			if err := runWith(context.Background(), []string{"help", command.name}); err != nil {
+				t.Fatalf("devbox help %s: %v", command.name, err)
+			}
+		})
+		for _, flag := range command.flags {
+			if !strings.Contains(out, flag) {
+				t.Errorf("devbox help %s does not name %s:\n%s", command.name, flag, out)
+			}
+		}
+	}
+}
+
 func TestDryRunRehearsesInsteadOfConnecting(t *testing.T) {
 	completeConfig(t)
 	out := captureStdout(t, func() {

@@ -153,7 +153,7 @@ fi
 		body: `found=0
 missing=
 for library in libnss3.so libnspr4.so libatk-1.0.so.0 libatk-bridge-2.0.so.0 libcups.so.2 libdrm.so.2 libxkbcommon.so.0 libXcomposite.so.1 libXdamage.so.1 libXfixes.so.3 libXrandr.so.2 libgbm.so.1 libpango-1.0.so.0 libcairo.so.2 libasound.so.2 libatspi.so.0; do
-	if ldconfig -p 2>/dev/null | grep -q " $library "; then
+	if ldconfig -p 2>/dev/null | grep -qE "(^|[[:space:]])$library "; then
 		found=$((found + 1))
 	else
 		missing="$missing $library"

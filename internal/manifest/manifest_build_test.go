@@ -90,6 +90,9 @@ func TestBuildExcludesTrackedSecretPath(t *testing.T) {
 		"build/app.o",
 		"sub/node_modules/nested/index.js",
 		"sub/.env",
+		".venv/bin/python",
+		"dsg-events/.venv/lib/python3.12/site-packages/x.py",
+		"__pycache__/mod.cpython-312.pyc",
 	}
 	for _, rel := range excluded {
 		write(t, root, rel, "canary\n", 0o600)
@@ -148,7 +151,7 @@ func TestBuildRejectsCaseCollision(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "case") {
 		t.Fatalf("Validate error = %v, want a case-collision error", err)
 	}
-	if err := Materialize(root, m, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
+	if err := Materialize(root, m, Policy{}, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
 		t.Fatal("Materialize accepted a case-insensitive path collision")
 	}
 }
@@ -283,7 +286,7 @@ func TestBuildRejectsInvalidUTF8Path(t *testing.T) {
 	if _, err := Encode(badPath); err == nil || !strings.Contains(err.Error(), "UTF-8") {
 		t.Fatalf("Encode error = %v, want a UTF-8 error before JSON encoding", err)
 	}
-	if err := Materialize(root, badPath, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
+	if err := Materialize(root, badPath, Policy{}, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
 		t.Fatal("Materialize accepted an invalid UTF-8 path")
 	}
 
@@ -713,7 +716,7 @@ func TestBuildExcludesCaseVariantSecretPaths(t *testing.T) {
 
 		// The spelling must survive materialization too.
 		dstPath := filepath.Join(t.TempDir(), "dst")
-		if err := Materialize(spelled, m, openDest(t, dstPath)); err != nil {
+		if err := Materialize(spelled, m, Policy{}, openDest(t, dstPath)); err != nil {
 			t.Fatalf("Materialize: %v", err)
 		}
 		for _, rel := range want {
@@ -789,4 +792,31 @@ func TestBuildRejectsCaseVariantNestedGitFile(t *testing.T) {
 			t.Fatalf("entries = %v, want only app.go", got)
 		}
 	})
+}
+
+// TestBuildProjectsNestedRepositoriesWhenAsked covers the one projection choice a
+// caller gets: a repository inside the tree is refused by default, and a caller
+// dumping a whole directory for its own use may accept it as plain files. The
+// metadata is still excluded and the mandatory exclusions still apply, so the
+// result is a file projection and never a repository.
+func TestBuildProjectsNestedRepositoriesWhenAsked(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "app.go", "package app\n", 0o644)
+	write(t, root, "vendor/dep/main.go", "package dep\n", 0o644)
+	write(t, root, "vendor/dep/.git/config", "[core]\n", 0o644)
+	write(t, root, "vendor/dep/.env", "SECRET=yes\n", 0o644)
+	write(t, root, "vendor/dep/node_modules/x/index.js", "x\n", 0o644)
+
+	if _, err := Build(root, Policy{}); err == nil {
+		t.Fatal("the default policy must still refuse a nested repository")
+	}
+	m, err := Build(root, Policy{AllowNestedRepositories: true})
+	if err != nil {
+		t.Fatalf("Build with nested repositories allowed: %v", err)
+	}
+	got := paths(m)
+	want := "app.go,vendor/dep/main.go"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("entries = %v, want %v", got, want)
+	}
 }

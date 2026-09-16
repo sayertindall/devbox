@@ -67,7 +67,14 @@ const envPrefix = ".env."
 // Policy has no fields yet. Per-project excludes belong here when a project
 // needs more than the mandatory list; Materialize must then be given the same
 // policy so its undeclared-path rewalk uses identical rules.
-type Policy struct{}
+type Policy struct {
+	// AllowNestedRepositories projects a repository found inside the source tree
+	// as ordinary files. Its metadata is still excluded, so what arrives is a file
+	// projection of the working tree with no history, which is what an operator
+	// dumping a whole directory for their own use is asking for and what a
+	// projection refuses by default.
+	AllowNestedRepositories bool
+}
 
 // mandatoryExcludes never enter a source or baseline projection. Matching is by
 // base name at any depth, so a nested node_modules or sub/.env is excluded too.
@@ -84,6 +91,12 @@ var mandatoryExcludes = []string{
 	"node_modules",
 	"dist",
 	"build",
+	// A virtual environment is machine-specific build output: its interpreter links
+	// are absolute paths to this machine, which a projection refuses and which are
+	// meaningless on the box anyway. Bytecode caches are the same class.
+	".venv",
+	"venv",
+	"__pycache__",
 }
 
 // ErrNestedRepository reports a repository inside the source tree. A projection
@@ -127,21 +140,21 @@ type canonical struct {
 
 // Build walks the current source below root without following symlinks and
 // returns the canonical positive manifest.
-func Build(root string, _ Policy) (Manifest, error) {
+func Build(root string, policy Policy) (Manifest, error) {
 	source, err := os.OpenRoot(root)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("open source root: %w", err)
 	}
 	defer source.Close()
-	return buildFromRoot(source)
+	return buildFromRoot(source, policy)
 }
 
 // buildFromRoot builds a manifest from an already-open source root, so a caller
 // that also reads files (Materialize) uses one stable boundary for both.
-func buildFromRoot(source *os.Root) (Manifest, error) {
+func buildFromRoot(source *os.Root, policy Policy) (Manifest, error) {
 	var entries []Entry
 	var total int64
-	if err := walk(source, ".", nil, &entries, &total); err != nil {
+	if err := walk(source, ".", policy, nil, &entries, &total); err != nil {
 		return Manifest{}, err
 	}
 	slices.SortFunc(entries, func(a, b Entry) int { return strings.Compare(a.Path, b.Path) })
@@ -162,13 +175,13 @@ func buildFromRoot(source *os.Root) (Manifest, error) {
 // caller observed for dir, or nil for the root: the opened directory must still
 // be that same file, so a directory swapped for a symlink mid-walk fails instead
 // of redirecting the walk.
-func walk(source *os.Root, dir string, expect os.FileInfo, entries *[]Entry, total *int64) error {
+func walk(source *os.Root, dir string, policy Policy, expect os.FileInfo, entries *[]Entry, total *int64) error {
 	names, err := readStableDir(source, dir, expect)
 	if err != nil {
 		return err
 	}
 	for _, dirent := range names {
-		rel, skip, err := admit(dir, dirent.Name())
+		rel, skip, err := admit(dir, dirent.Name(), policy)
 		if err != nil {
 			return err
 		}
@@ -179,7 +192,7 @@ func walk(source *os.Root, dir string, expect os.FileInfo, entries *[]Entry, tot
 		if err != nil {
 			return fmt.Errorf("lstat %s: %w", rel, err)
 		}
-		if err := recordEntry(source, rel, observed, entries, total); err != nil {
+		if err := recordEntry(source, rel, policy, observed, entries, total); err != nil {
 			return err
 		}
 	}
@@ -220,9 +233,12 @@ func readStableDir(source *os.Root, dir string, expect os.FileInfo) ([]os.DirEnt
 // FR-003 forbids partially copying one, so this is an error rather than a
 // silent skip. At the root the marker is this project's own repository storage
 // (directory, or a file for a worktree checkout) and is excluded.
-func admit(dir, name string) (rel string, skip bool, err error) {
+func admit(dir, name string, policy Policy) (rel string, skip bool, err error) {
 	if isGitMarker(name) {
-		if dir == "." {
+		// At the root the marker belongs to the tree being projected, so it is
+		// always skipped. Deeper down it marks another repository, which a
+		// projection cannot carry unless the caller said to flatten it.
+		if dir == "." || policy.AllowNestedRepositories {
 			return "", true, nil
 		}
 		return "", false, fmt.Errorf("%w or submodule at %s is not allowed in source", ErrNestedRepository, dir)
@@ -243,11 +259,11 @@ func admit(dir, name string) (rel string, skip bool, err error) {
 // regular file is hashed and declared, a symlink is declared with its raw
 // target, and anything else is refused. Target safety needs the whole entry
 // graph, so Validate decides it rather than the walk.
-func recordEntry(source *os.Root, rel string, observed os.FileInfo, entries *[]Entry, total *int64) error {
+func recordEntry(source *os.Root, rel string, policy Policy, observed os.FileInfo, entries *[]Entry, total *int64) error {
 	mode := observed.Mode()
 	switch {
 	case mode.IsDir():
-		return walk(source, rel, observed, entries, total)
+		return walk(source, rel, policy, observed, entries, total)
 	case mode.IsRegular():
 		size, digest, err := hashFile(source, rel, observed)
 		if err != nil {
@@ -719,7 +735,7 @@ func compareEntry(want, found Entry) error {
 // directory, hashed while copying, compared against the declared size and
 // digest, and only then atomically renamed into place. A failure removes the
 // temporary file, so a rejected entry never leaves unverified bytes behind.
-func Materialize(sourceRoot string, m Manifest, destination *os.Root) error {
+func Materialize(sourceRoot string, m Manifest, policy Policy, destination *os.Root) error {
 	if destination == nil {
 		return errors.New("destination root is required")
 	}
@@ -734,7 +750,7 @@ func Materialize(sourceRoot string, m Manifest, destination *os.Root) error {
 
 	// Manifest authority: rewalk through the same source root the copies use, so
 	// no extra, missing, or mismatched path can enter the destination.
-	actual, err := buildFromRoot(source)
+	actual, err := buildFromRoot(source, policy)
 	if err != nil {
 		return err
 	}

@@ -277,3 +277,46 @@ func TestDialerDryRunLeavesTheSSHConfigurationAlone(t *testing.T) {
 		t.Fatalf("the dry run did not say what it would write: %q", out.String())
 	}
 }
+
+// TestRunWaitsOutTheBootWindow covers the first connection after a start: the
+// tunnel answers before the box does, which clears on its own, so the run waits
+// and then proceeds rather than reporting a refused backend as a failure.
+func TestRunWaitsOutTheBootWindow(t *testing.T) {
+	attempts := 0
+	recorder := &procRecorder{reply: func(procCall) (string, error) {
+		attempts++
+		if attempts == 1 {
+			return "ERROR: [0] Error during local connection to [stdin]: Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)", errors.New("exit status 255")
+		}
+		return "hello\n", nil
+	}}
+	var errOut bytes.Buffer
+	session := sshSession{alias: "devbox-alpha", proc: recorder.run, err: &errOut}
+	out, err := session.Run(context.Background(), "hostname")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if out != "hello\n" || attempts != 2 {
+		t.Fatalf("out = %q after %d attempts, want the second attempt's output", out, attempts)
+	}
+	if !strings.Contains(errOut.String(), "not answering yet") {
+		t.Fatalf("the wait was silent: %q", errOut.String())
+	}
+}
+
+// TestRunDoesNotWaitOnARefusedKey keeps the wait narrow: a key the box will never
+// accept is reported at once instead of being retried for the whole window.
+func TestRunDoesNotWaitOnARefusedKey(t *testing.T) {
+	attempts := 0
+	recorder := &procRecorder{reply: func(procCall) (string, error) {
+		attempts++
+		return "sayer@dev: Permission denied (publickey).", errors.New("exit status 255")
+	}}
+	session := sshSession{alias: "devbox-alpha", proc: recorder.run, err: io.Discard}
+	if _, err := session.Run(context.Background(), "hostname"); err == nil {
+		t.Fatal("a refused key is a failure, not a wait")
+	}
+	if attempts != 1 {
+		t.Fatalf("a refused key was retried %d times", attempts)
+	}
+}

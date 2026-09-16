@@ -31,15 +31,21 @@ func realOps() ops {
 	}
 }
 
+// notice writes an advisory line to the operator's error stream, which keeps it
+// out of the output a command was actually asked for.
+func notice(deps cli.Deps, format string, args ...any) {
+	if deps.Err == nil {
+		return
+	}
+	fmt.Fprintf(deps.Err, format+"\n", args...)
+}
+
 // reach opens the box so its Host entry is current, then returns the alias for a
 // verb that runs ssh itself. Opening a session is the refresh, and it is the only
 // path that knows the box exists: without it ssh would fail on a name that
 // resolves nowhere, which is what a missing entry looks like from here.
-func reach(ctx context.Context, o ops, deps cli.Deps, name box.Name) (string, error) {
-	if _, err := o.open(ctx, deps, name); err != nil {
-		return "", err
-	}
-	return deps.Config.SSHHost(name.String()), nil
+func reach(ctx context.Context, o ops, deps cli.Deps, name box.Name) (Session, error) {
+	return o.open(ctx, deps, name)
 }
 
 // Commands returns the access verbs.
@@ -164,9 +170,13 @@ func opSSH(o ops) cli.Command {
 				return err
 			}
 			remote := strings.Join(positional[1:], " ")
-			alias, err := reach(ctx, o, deps, name)
+			session, err := reach(ctx, o, deps, name)
 			if err != nil {
 				return err
+			}
+			alias := deps.Config.SSHHost(name.String())
+			if state, err := session.Run(ctx, boxStateCommand()); err == nil && state != boxReady {
+				notice(deps, "%s", bootNotice(deps.Config, name, state))
 			}
 			argv := interactiveArgv(alias, remote)
 			if dryRun(deps, argv...) {
@@ -343,9 +353,13 @@ func opTerminfo(o ops) cli.Command {
 				deps.Printf("%s", terminfoFallback)
 				return err
 			}
-			alias, err := reach(ctx, o, deps, name)
+			session, err := reach(ctx, o, deps, name)
 			if err != nil {
 				return err
+			}
+			alias := deps.Config.SSHHost(name.String())
+			if state, err := session.Run(ctx, boxStateCommand()); err == nil && state != boxReady {
+				notice(deps, "%s", bootNotice(deps.Config, name, state))
 			}
 			if dryRun(deps, sshArgv(alias, "tic -x -")...) {
 				deps.Printf("%s", terminfoFallback)

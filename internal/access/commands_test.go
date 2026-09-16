@@ -160,7 +160,7 @@ func TestForwardDefaultsToTheStandardPortWhenTheConfigurationNamesNone(t *testin
 func TestSSHStreamsTheOperatorsTerminal(t *testing.T) {
 	recorder := &procRecorder{reply: func(procCall) (string, error) { return "builder@alpha:~$ \n", nil }}
 	deps, out, _ := testDeps(testConfig(), &gcloud.Fake{})
-	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "ssh").Run(context.Background(), deps, []string{"alpha"}); err != nil {
+	if err := commandFor(t, ops{open: openOn(&Recording{}), proc: recorder.run}, "ssh").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("ssh: %v", err)
 	}
 	want := []string{"ssh", "devbox-alpha"}
@@ -176,7 +176,7 @@ func TestSSHRunsOneCommandWhenTheOperatorNamesOne(t *testing.T) {
 	recorder := &procRecorder{}
 	deps, _, _ := testDeps(testConfig(), &gcloud.Fake{})
 	args := []string{"alpha", "--", "journalctl -u docker --no-pager | tail -5"}
-	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "ssh").Run(context.Background(), deps, args); err != nil {
+	if err := commandFor(t, ops{open: openOn(&Recording{}), proc: recorder.run}, "ssh").Run(context.Background(), deps, args); err != nil {
 		t.Fatalf("ssh: %v", err)
 	}
 	want := []string{"ssh", "devbox-alpha", "--", "journalctl -u docker --no-pager | tail -5"}
@@ -259,7 +259,7 @@ func TestTerminfoInstallsTheLocalEntryOnTheBox(t *testing.T) {
 		return "", nil
 	}}
 	deps, out, _ := testDeps(testConfig(), &gcloud.Fake{})
-	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
+	if err := commandFor(t, ops{open: openOn(&Recording{}), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("terminfo: %v", err)
 	}
 	want := [][]string{
@@ -295,7 +295,7 @@ func TestTerminfoPrefersTheHomebrewInfocmpWhenTheSystemOneFails(t *testing.T) {
 		}
 	}}
 	deps, _, _ := testDeps(testConfig(), &gcloud.Fake{})
-	if err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
+	if err := commandFor(t, ops{open: openOn(&Recording{}), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"}); err != nil {
 		t.Fatalf("terminfo: %v", err)
 	}
 	want := [][]string{
@@ -318,7 +318,7 @@ func TestTerminfoReportsTheFallbackWhenNoInfocmpHasTheEntry(t *testing.T) {
 		return "", errors.New("unknown terminal type")
 	}}
 	deps, out, _ := testDeps(testConfig(), &gcloud.Fake{})
-	err := commandFor(t, ops{open: openOn(nil), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"})
+	err := commandFor(t, ops{open: openOn(&Recording{}), proc: recorder.run}, "terminfo").Run(context.Background(), deps, []string{"alpha"})
 	if err == nil {
 		t.Fatal("an unknown terminal must be reported")
 	}
@@ -409,7 +409,7 @@ func TestSSHRefreshesTheHostEntryForTheBox(t *testing.T) {
 	o := ops{
 		open: func(_ context.Context, _ cli.Deps, name box.Name) (Session, error) {
 			reached = append(reached, name)
-			return nil, nil
+			return &Recording{}, nil
 		},
 		proc: recorder.run,
 	}
@@ -443,5 +443,37 @@ func TestSSHDoesNotRunWhenTheBoxCannotBeReached(t *testing.T) {
 	}
 	if len(recorder.calls) != 0 {
 		t.Fatalf("ssh ran %d local processes for a box it could not reach", len(recorder.calls))
+	}
+}
+
+// TestSSHSaysWhenTheBoxIsStillBootstrapping covers the first connection to a fresh
+// box: the session opens, and what the operator needs to know is that the install
+// is still running and where to follow it.
+func TestSSHSaysWhenTheBoxIsStillBootstrapping(t *testing.T) {
+	recorder := &procRecorder{}
+	deps, out, errOut := testDeps(testConfig(), &gcloud.Fake{})
+	session := &Recording{Reply: func(string) (string, error) { return boxBooting, nil }}
+	o := ops{open: openOn(session), proc: recorder.run}
+	if err := commandFor(t, o, "ssh").Run(context.Background(), deps, []string{"alpha"}); err != nil {
+		t.Fatalf("ssh: %v", err)
+	}
+	if !strings.Contains(errOut.String(), "still bootstrapping") || !strings.Contains(errOut.String(), box.BootstrapLog) {
+		t.Fatalf("the session did not say the box was building: %q", errOut.String())
+	}
+	if len(recorder.calls) != 1 {
+		t.Fatalf("ssh did not open the session: %v", recorder.calls)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("the notice belongs on the error stream, not in the output: %q", out.String())
+	}
+
+	errOut.Reset()
+	ready := &Recording{Reply: func(string) (string, error) { return boxReady, nil }}
+	if err := commandFor(t, ops{open: openOn(ready), proc: recorder.run}, "ssh").
+		Run(context.Background(), deps, []string{"alpha"}); err != nil {
+		t.Fatalf("ssh: %v", err)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("a built box needs no notice: %q", errOut.String())
 	}
 }

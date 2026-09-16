@@ -16,6 +16,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 
 	"devbox/internal/box"
 	"devbox/internal/config"
@@ -193,13 +194,88 @@ func (s sshSession) Run(ctx context.Context, command string) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", errors.New("access: remote command is required")
 	}
-	var combined bytes.Buffer
-	err := s.proc(ctx, sshArgv(s.alias, command), nil, &combined, &combined)
-	out := combined.String()
-	if err != nil {
-		return out, fmt.Errorf("ssh %s: %w", s.alias, err)
+	deadline := time.Now().Add(connectWait)
+	for attempt := 0; ; attempt++ {
+		var combined bytes.Buffer
+		err := s.proc(ctx, sshArgv(s.alias, command), nil, &combined, &combined)
+		out := combined.String()
+		if err == nil {
+			return out, nil
+		}
+		if !transient(out) || time.Now().After(deadline) {
+			return out, fmt.Errorf("ssh %s: %w", s.alias, err)
+		}
+		if attempt == 0 && s.err != nil {
+			fmt.Fprintf(s.err, "%s is not answering yet; waiting for it to finish booting\n", s.alias)
+		}
+		select {
+		case <-ctx.Done():
+			return out, fmt.Errorf("ssh %s: %w", s.alias, err)
+		case <-time.After(connectStep):
+		}
 	}
-	return out, nil
+}
+
+// connectWait is how long the first connection waits for a box that is still
+// booting. A box reports RUNNING before its ssh daemon listens, and the tunnel in
+// front of it reports that as a refused backend, so a connection made right after
+// a start or a create fails for a reason that clears on its own.
+const (
+	connectWait = 90 * time.Second
+	connectStep = 3 * time.Second
+)
+
+// transient reports whether a failed connection failed because the box was not
+// ready yet. The phrases are the tunnel's and ssh's own words for a closed port. A
+// refused key is deliberately absent: that never clears by waiting.
+func transient(output string) bool {
+	for _, phrase := range []string{
+		"failed to connect to backend",
+		"Connection refused",
+		"Connection closed",
+		"Connection timed out",
+		"No route to host",
+	} {
+		if strings.Contains(output, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// boxStateCommand reports whether the box finished its bootstrap, so a session
+// that opens onto a box still installing can say so rather than leaving the
+// operator to wonder why half the toolchain is missing.
+func boxStateCommand() string {
+	return fmt.Sprintf("if [ -f %s ]; then echo %s; elif [ -f %s ]; then echo %s; tail -n 1 %s; else echo %s; fi",
+		box.BootstrapStamp, boxReady, box.BootstrapFailed, boxFailed, box.BootstrapLog, boxBooting)
+}
+
+// The three states boxStateCommand reports, and the notice each one earns. A
+// failed install is reported as failed with the line that caused it, because a
+// box that never becomes ready has to say so rather than look slow forever.
+const (
+	boxReady   = "ready"
+	boxBooting = "bootstrapping"
+	boxFailed  = "failed"
+)
+
+// bootNotice is what a session says about a box that has not finished building
+// itself. For a failure it carries the bootstrap's own last line, which is the
+// difference between the operator reading a cause and reading a serial console.
+func bootNotice(cfg config.Config, name box.Name, state string) string {
+	lines := strings.Split(strings.TrimSpace(state), "\n")
+	switch lines[0] {
+	case boxFailed:
+		detail := "no reason recorded"
+		if len(lines) > 1 && strings.TrimSpace(lines[1]) != "" {
+			detail = strings.TrimSpace(lines[1])
+		}
+		return fmt.Sprintf("the bootstrap failed on %s: %s\nthe full log is %s on the box", name, detail, box.BootstrapLog)
+	default:
+		return fmt.Sprintf("%s is still bootstrapping; follow it with: devbox ssh %s -- tail -f %s",
+			cfg.SSHHost(name.String()), name, box.BootstrapLog)
+	}
 }
 
 // Upload copies one local path into a remote directory.

@@ -45,15 +45,16 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	before, err := localManifest(root, *force)
-	if err != nil {
-		return err
-	}
 	state, err := loadState(statePath)
 	if err != nil {
 		return err
 	}
 	record, recorded := state.find(name.String(), treeName)
+	includeNested := recorded && record.IncludeNested
+	before, err := localManifest(root, includeNested, *force)
+	if err != nil {
+		return err
+	}
 	if err := checkDivergence(deps, name, treeName, root, before, record, recorded, *force); err != nil {
 		return err
 	}
@@ -98,7 +99,7 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	rollback, err := newJournal(journalDir, root, before, arrived)
+	rollback, err := newJournal(journalDir, root, before, arrived, includeNested)
 	if err != nil {
 		return err
 	}
@@ -114,7 +115,7 @@ func pull(ctx context.Context, deps cli.Deps, args []string) error {
 
 	// The local tree is the tree that arrived, so the digest of record is now
 	// that tree's: the next pull compares the local tree against it.
-	state.record(newState(name.String(), treeName, arrived.SHA256, root, time.Now()))
+	state.record(newState(name.String(), treeName, arrived.SHA256, root, includeNested, time.Now()))
 	if err := saveState(statePath, state); err != nil {
 		return err
 	}
@@ -210,7 +211,7 @@ func applyArrived(root, arrivedRoot string, before, arrived manifest.Manifest) e
 		return fmt.Errorf("open local tree %s: %w", root, err)
 	}
 	defer destination.Close()
-	if err := manifest.Materialize(arrivedRoot, arrived, destination); err != nil {
+	if err := manifest.Materialize(arrivedRoot, arrived, manifest.Policy{}, destination); err != nil {
 		return fmt.Errorf("write the tree that arrived: %w", err)
 	}
 

@@ -69,7 +69,7 @@ func synthetic(sourceRoot string, policy manifest.Policy, destination *os.Root) 
 	if err != nil {
 		return manifest.Manifest{}, fmt.Errorf("build synthetic baseline: %w", err)
 	}
-	if err := manifest.Materialize(sourceRoot, m, destination); err != nil {
+	if err := manifest.Materialize(sourceRoot, m, policy, destination); err != nil {
 		return manifest.Manifest{}, fmt.Errorf("materialize synthetic baseline: %w", err)
 	}
 	return m, nil
@@ -117,7 +117,7 @@ func fromHEAD(sourceRoot string, policy manifest.Policy, destination *os.Root) (
 	if err != nil {
 		return manifest.Manifest{}, fmt.Errorf("build baseline manifest: %w", err)
 	}
-	if err := manifest.Materialize(worktree, baseline, destination); err != nil {
+	if err := manifest.Materialize(worktree, baseline, policy, destination); err != nil {
 		return manifest.Manifest{}, fmt.Errorf("materialize baseline: %w", err)
 	}
 	return baseline, nil

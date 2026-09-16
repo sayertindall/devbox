@@ -53,7 +53,7 @@ func TestValidateRejectsManifestBytesMismatch(t *testing.T) {
 			if err := Compare(bad, good); err == nil {
 				t.Fatal("Compare accepted a forged byte total")
 			}
-			if err := Materialize(root, bad, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
+			if err := Materialize(root, bad, Policy{}, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
 				t.Fatal("Materialize accepted a forged byte total")
 			}
 		})
@@ -80,7 +80,7 @@ func TestValidateRejectsManifestBytesMismatch(t *testing.T) {
 		if validateErr == nil || !strings.Contains(validateErr.Error(), "byte total") {
 			t.Fatalf("Validate error = %v, want a byte-total error", validateErr)
 		}
-		if err := Materialize(root, bad, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
+		if err := Materialize(root, bad, Policy{}, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
 			t.Fatal("Materialize accepted a self-consistent forged quota")
 		}
 	})
@@ -110,7 +110,7 @@ func TestValidateRejectsManifestBytesMismatch(t *testing.T) {
 		if _, err := Encode(bad); err == nil {
 			t.Fatal("Encode accepted an overflowing byte total")
 		}
-		if err := Materialize(root, bad, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
+		if err := Materialize(root, bad, Policy{}, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
 			t.Fatal("Materialize accepted an overflowing byte total")
 		}
 	})
@@ -135,7 +135,7 @@ func TestValidateRejectsNegativeManifestBytes(t *testing.T) {
 			if _, err := Encode(bad); err == nil {
 				t.Fatal("Encode accepted a negative byte total")
 			}
-			if err := Materialize(root, bad, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
+			if err := Materialize(root, bad, Policy{}, openDest(t, filepath.Join(t.TempDir(), "dst"))); err == nil {
 				t.Fatal("Materialize accepted a negative byte total")
 			}
 		})

@@ -149,12 +149,49 @@ func TestPushRefusalNamesTheNextCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("a nested repository must be refused")
 	}
-	for _, want := range []string{"vendor/dep", "devbox push dev <subdirectory>", "--tree <name>"} {
+	for _, want := range []string{"vendor/dep", "--include-nested", "devbox push dev <subdirectory>"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not carry %q", err, want)
 		}
 	}
 	if len(session.Uploads) != 0 {
 		t.Fatalf("a refused push uploaded %d paths", len(session.Uploads))
+	}
+}
+
+// TestPushIncludeNestedProjectsRepositoriesAsFiles covers the flag an operator
+// uses to dump a whole directory: the repository's files travel, its metadata and
+// the mandatory exclusions do not, and the handoff records the choice so the pull
+// that follows rebuilds the same projection instead of refusing the tree it
+// pushed itself.
+func TestPushIncludeNestedProjectsRepositoriesAsFiles(t *testing.T) {
+	root := treeFixture(t, "alpha", map[string]string{
+		"main.go":            "package main\n",
+		"nested/lib.go":      "package nested\n",
+		"nested/.git/config": "[core]\n",
+		"nested/.env":        "SECRET=yes\n",
+	})
+	session := newStaging(t)
+	f := newFixture(t, session)
+
+	if err := f.run("push", "dev", root, "--tree", "alpha", "--include-nested"); err != nil {
+		t.Fatalf("push --include-nested: %v", err)
+	}
+	want := []string{"main.go", "nested", "nested/lib.go"}
+	if !slices.Equal(session.entries, want) {
+		t.Fatalf("the staged tree is %v, want %v", session.entries, want)
+	}
+
+	record, ok := f.stateFile().find("dev", "alpha")
+	if !ok || !record.IncludeNested {
+		t.Fatalf("the handoff did not record the projection: %+v", record)
+	}
+	// A pull rebuilds the local projection with the recorded choice, which is what
+	// keeps its digest comparison honest, while the default still refuses.
+	if _, err := localManifest(root, record.IncludeNested, false); err != nil {
+		t.Fatalf("the recorded projection does not rebuild: %v", err)
+	}
+	if _, err := localManifest(root, false, false); err == nil {
+		t.Fatal("the default projection must still refuse this tree")
 	}
 }

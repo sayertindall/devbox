@@ -210,7 +210,7 @@ func runConcurrentSourceReplacement(t *testing.T, parent, root, outsideSecret st
 			continue
 		}
 		dstPath := filepath.Join(t.TempDir(), "dst")
-		materializeErr := Materialize(root, m, openDest(t, dstPath))
+		materializeErr := Materialize(root, m, Policy{}, openDest(t, dstPath))
 		if materializeErr != nil {
 			rejected++
 			reasons["materialize: "+classify(materializeErr)]++
@@ -255,7 +255,7 @@ func runConcurrentSourceReplacement(t *testing.T, parent, root, outsideSecret st
 		t.Fatalf("Build after the race: %v", err)
 	}
 	quietPath := filepath.Join(t.TempDir(), "dst")
-	if err := Materialize(root, quiet, openDest(t, quietPath)); err != nil {
+	if err := Materialize(root, quiet, Policy{}, openDest(t, quietPath)); err != nil {
 		t.Fatalf("Materialize after the race: %v", err)
 	}
 	if verify := mustBuild(t, quietPath); verify.SHA256 != quiet.SHA256 {

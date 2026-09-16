@@ -186,7 +186,7 @@ func Prepare(input PrepareInput) (Prepared, error) {
 	if err != nil {
 		return Prepared{}, fmt.Errorf("build source manifest: %w", err)
 	}
-	if err := manifest.Materialize(input.SourceRoot, sourceManifest, input.SourceDest); err != nil {
+	if err := manifest.Materialize(input.SourceRoot, sourceManifest, input.Policy, input.SourceDest); err != nil {
 		return Prepared{}, fmt.Errorf("materialize source: %w", err)
 	}
 

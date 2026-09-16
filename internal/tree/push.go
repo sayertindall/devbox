@@ -20,6 +20,8 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	const usage = "devbox push <name> [path] [--tree <tree>]"
 	set := deps.FlagSet("push")
 	treeFlag := set.String("tree", "", "tree name on the box (default: the base name of the local path)")
+	includeNested := set.Bool("include-nested", false,
+		"project repositories found inside the tree as ordinary files; their git metadata and the standard exclusions still do not leave this machine")
 	positional, err := cli.Parse(set, args)
 	if err != nil {
 		return err
@@ -36,13 +38,14 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	pushed, err := manifest.Build(root, manifest.Policy{})
+	policy := manifest.Policy{AllowNestedRepositories: *includeNested}
+	pushed, err := manifest.Build(root, policy)
 	if err != nil {
 		if errors.Is(err, manifest.ErrNestedRepository) {
 			return fmt.Errorf("build the manifest of %s: %w\n"+
-				"push a subdirectory that does not contain it, or push that repository as its own tree:\n"+
-				"  devbox push %s <subdirectory>\n"+
-				"  devbox push %s <path to the repository> --tree <name>", root, err, name, name)
+				"push the whole tree as files, or push a subdirectory that does not contain it:\n"+
+				"  devbox push %s %s --include-nested\n"+
+				"  devbox push %s <subdirectory>", root, err, name, root, name)
 		}
 		return fmt.Errorf("build the manifest of %s: %w", root, err)
 	}
@@ -57,7 +60,7 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	work, err := stageTree(root, treeName, pushed)
+	work, err := stageTree(root, treeName, pushed, policy)
 	if err != nil {
 		return err
 	}
@@ -78,9 +81,12 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 	if err != nil {
 		return err
 	}
-	state.record(newState(name.String(), treeName, pushed.SHA256, root, time.Now()))
+	state.record(newState(name.String(), treeName, pushed.SHA256, root, *includeNested, time.Now()))
 	if err := saveState(statePath, state); err != nil {
 		return err
+	}
+	if *includeNested {
+		deps.Printf("repositories inside the tree were projected as files; their git metadata was not sent")
 	}
 	deps.Printf("pushed tree %s to %s: %d files, %d bytes", treeName, name, fileCount(pushed), pushed.Bytes)
 	return nil
@@ -90,7 +96,7 @@ func push(ctx context.Context, deps cli.Deps, args []string) error {
 // directory and returns it. The directory holds the payload under stagedTree and
 // the manifest beside it, so one upload carries the tree and one carries the
 // declaration the box keeps for it.
-func stageTree(root, treeName string, pushed manifest.Manifest) (_ string, err error) {
+func stageTree(root, treeName string, pushed manifest.Manifest, policy manifest.Policy) (_ string, err error) {
 	work, err := stagingDir("devbox-push-")
 	if err != nil {
 		return "", err
@@ -110,7 +116,7 @@ func stageTree(root, treeName string, pushed manifest.Manifest) (_ string, err e
 		return "", fmt.Errorf("open staging tree: %w", err)
 	}
 	defer destination.Close()
-	if err := manifest.Materialize(root, pushed, destination); err != nil {
+	if err := manifest.Materialize(root, pushed, policy, destination); err != nil {
 		return "", fmt.Errorf("stage the tree: %w", err)
 	}
 	if err := manifest.Write(filepath.Join(work, treeName+".json"), pushed); err != nil {

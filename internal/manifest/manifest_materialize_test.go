@@ -20,7 +20,7 @@ func TestMaterializeRejectsUndeclaredPath(t *testing.T) {
 	write(t, root, "sub/sneaky.txt", "sneaky\n", 0o644)
 
 	dstPath := filepath.Join(t.TempDir(), "dst")
-	err := Materialize(root, m, openDest(t, dstPath))
+	err := Materialize(root, m, Policy{}, openDest(t, dstPath))
 	if err == nil {
 		t.Fatal("Materialize accepted an undeclared source path")
 	}
@@ -41,7 +41,7 @@ func TestMaterializeUsesPreopenedDestinationRoot(t *testing.T) {
 	m := mustBuild(t, root)
 
 	t.Run("nil destination is rejected", func(t *testing.T) {
-		if err := Materialize(root, m, nil); err == nil {
+		if err := Materialize(root, m, Policy{}, nil); err == nil {
 			t.Fatal("Materialize accepted a nil destination root")
 		}
 	})
@@ -66,7 +66,7 @@ func TestMaterializeUsesPreopenedDestinationRoot(t *testing.T) {
 			t.Fatalf("symlink over destination path: %v", err)
 		}
 
-		if err := Materialize(root, m, destination); err != nil {
+		if err := Materialize(root, m, Policy{}, destination); err != nil {
 			t.Fatalf("Materialize: %v", err)
 		}
 
@@ -93,7 +93,7 @@ func TestMaterializeUsesPreopenedDestinationRoot(t *testing.T) {
 
 	t.Run("no temporary file is left behind", func(t *testing.T) {
 		dstPath := filepath.Join(t.TempDir(), "dst")
-		if err := Materialize(root, m, openDest(t, dstPath)); err != nil {
+		if err := Materialize(root, m, Policy{}, openDest(t, dstPath)); err != nil {
 			t.Fatalf("Materialize: %v", err)
 		}
 		err := filepath.WalkDir(dstPath, func(p string, d os.DirEntry, err error) error {
@@ -137,7 +137,7 @@ func TestMaterializeRejectsSourceReplacementAfterManifestBuild(t *testing.T) {
 		symlink(t, root, "app.go", "../secret.txt")
 
 		dstPath := filepath.Join(t.TempDir(), "dst")
-		if err := Materialize(root, m, openDest(t, dstPath)); err == nil {
+		if err := Materialize(root, m, Policy{}, openDest(t, dstPath)); err == nil {
 			t.Fatal("Materialize accepted a replaced source file")
 		}
 		if treeContains(t, dstPath, digest(outsideSecret)) {
@@ -154,7 +154,7 @@ func TestMaterializeRejectsSourceReplacementAfterManifestBuild(t *testing.T) {
 		write(t, root, "app.go", "package bad\n", 0o644)
 
 		dstPath := filepath.Join(t.TempDir(), "dst")
-		err := Materialize(root, m, openDest(t, dstPath))
+		err := Materialize(root, m, Policy{}, openDest(t, dstPath))
 		if err == nil {
 			t.Fatal("Materialize accepted replaced source content")
 		}
@@ -172,7 +172,7 @@ func TestMaterializeRejectsSourceReplacementAfterManifestBuild(t *testing.T) {
 			t.Fatalf("mkfifo: %v", err)
 		}
 		dstPath := filepath.Join(t.TempDir(), "dst")
-		if err := Materialize(root, m, openDest(t, dstPath)); err == nil {
+		if err := Materialize(root, m, Policy{}, openDest(t, dstPath)); err == nil {
 			t.Fatal("Materialize accepted a source file replaced by a FIFO")
 		}
 		if _, err := os.Lstat(filepath.Join(dstPath, "app.go")); err == nil {
@@ -197,7 +197,7 @@ func TestMaterializeNeverWritesOutsideDestination(t *testing.T) {
 	t.Run("declared entries only", func(t *testing.T) {
 		parent := t.TempDir()
 		dstPath := filepath.Join(parent, "dst")
-		if err := Materialize(root, good, openDest(t, dstPath)); err != nil {
+		if err := Materialize(root, good, Policy{}, openDest(t, dstPath)); err != nil {
 			t.Fatalf("Materialize: %v", err)
 		}
 		content, err := os.ReadFile(filepath.Join(dstPath, "sub", "keep.txt"))
@@ -250,7 +250,7 @@ func TestMaterializeNeverWritesOutsideDestination(t *testing.T) {
 			if !strings.Contains(err.Error(), bad.want) {
 				t.Fatalf("Validate error = %v, want it to mention %q", err, bad.want)
 			}
-			if err := Materialize(root, m, openDest(t, dstPath)); err == nil {
+			if err := Materialize(root, m, Policy{}, openDest(t, dstPath)); err == nil {
 				t.Fatalf("Materialize accepted %+v", bad.entry)
 			}
 			if _, err := os.Lstat(filepath.Join(parent, "escape.txt")); err == nil {
@@ -273,7 +273,7 @@ func TestMaterializeNeverWritesOutsideDestination(t *testing.T) {
 				break
 			}
 		}
-		if err := Materialize(root, bad, openDest(t, dstPath)); err == nil {
+		if err := Materialize(root, bad, Policy{}, openDest(t, dstPath)); err == nil {
 			t.Fatal("Materialize accepted a digest mismatch")
 		}
 		if treeContains(t, dstPath, digest("package app\n")) {
@@ -294,7 +294,7 @@ func TestMaterializeRejectsCaseVariantExcludedPath(t *testing.T) {
 
 			// The rejection must come from the exclusion rule itself, not
 			// incidentally from the manifest-authority rewalk of the source.
-			err := Materialize(source, m, destination)
+			err := Materialize(source, m, Policy{}, destination)
 			if err == nil {
 				t.Fatalf("Materialize accepted case-variant excluded entry %+v", entry)
 			}

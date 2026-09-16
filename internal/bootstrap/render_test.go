@@ -34,6 +34,12 @@ func TestRenderIncludesRequiredLines(t *testing.T) {
 		{"explicit path", "export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'"},
 		{"bootstrap log", "LOG='" + box.BootstrapLog + "'"},
 		{"bootstrap stamp", "STAMP='" + box.BootstrapStamp + "'"},
+		{"failure mark", "FAILED='" + box.BootstrapFailed + "'"},
+		// The mark is what lets a client tell a failed install from a slow one, so
+		// both halves of it are required: the trap that writes it and the clear that
+		// keeps a stale one from outliving the install that failed.
+		{"failure trap", "trap 'status=$?;"},
+		{"failure mark cleared on success", "rm -f \"$FAILED\""},
 		{"data mount", "DATA_MOUNT='/mnt/data'"},
 		{"data disk device", "DATA_DEVICE='/dev/disk/by-id/google-devbox-data'"},
 		{"docker root", "DOCKER_ROOT='" + box.DockerRoot + "'"},

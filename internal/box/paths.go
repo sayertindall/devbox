@@ -26,6 +26,10 @@ const (
 	// BootstrapStamp is written after a successful first boot, so a later boot
 	// can skip the long path.
 	BootstrapStamp = "/var/lib/devbox/bootstrap.ok"
+	// BootstrapFailed is written when a phase fails. Without it a failed install
+	// and a slow one look identical from outside, and the operator is left reading
+	// the serial console to find out which happened.
+	BootstrapFailed = "/var/lib/devbox/bootstrap.failed"
 )
 
 // SSHConfigMarkerStart and SSHConfigMarkerEnd delimit the devbox-managed block in

@@ -22,6 +22,7 @@ import (
 type scriptValues struct {
 	Log            string
 	Stamp          string
+	Failed         string
 	Mount          string
 	Device         string
 	DockerRoot     string
@@ -86,6 +87,7 @@ func scriptFor(cfg config.Config) (scriptValues, error) {
 	values := scriptValues{
 		Log:            box.BootstrapLog,
 		Stamp:          box.BootstrapStamp,
+		Failed:         box.BootstrapFailed,
 		Mount:          cfg.DataMount,
 		Device:         "/dev/disk/by-id/google-" + cfg.DataDiskName,
 		DockerRoot:     box.DockerRoot,
@@ -238,6 +240,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 LOG='{{.Log}}'
 STAMP='{{.Stamp}}'
+FAILED='{{.Failed}}'
 DATA_MOUNT='{{.Mount}}'
 DATA_DEVICE='{{.Device}}'
 DOCKER_ROOT='{{.DockerRoot}}'
@@ -267,6 +270,12 @@ if [ -f "$STAMP" ] && [ "${DEVBOX_BOOTSTRAP_FORCE:-0}" != 1 ]; then
 	log "already bootstrapped, $STAMP exists; set DEVBOX_BOOTSTRAP_FORCE=1 to rebuild this box"
 	exit 0
 fi
+
+# A phase that fails must leave a mark. The client watches for the stamp and would
+# otherwise report a failed install as one that is still running, which is the
+# difference between a box that becomes ready and one that never will.
+rm -f "$FAILED"
+trap 'status=$?; log "phase failed with status $status; the line above is the cause"; printf "%s\n" "$status" > "$FAILED"; exit "$status"' ERR
 
 # Every user-scoped step runs as the login user, so the mise data directory, the
 # shims, and the pnpm store belong to the account the operator will use.
@@ -455,6 +464,7 @@ fi
 # non-interactive ssh command, so the harness is linked where the shims are.
 ln -sfn "$NPM_PREFIX/bin/$HARNESS_BINARY" "/usr/local/bin/$HARNESS_BINARY"
 
+rm -f "$FAILED"
 log 'phase complete: this box is ready'
 install -d -m 0755 "$(dirname "$STAMP")"
 # The stamp is the last thing written, so a machine that boots again after any
